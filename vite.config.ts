@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/*.svg', 'icons/*.png'],
       manifest: {
-        name: 'LekSplit — Expense & Debt Splitting',
-        short_name: 'LekSplit',
+        name: 'SplitUp — Expense & Debt Splitting',
+        short_name: 'SplitUp',
         description: 'Tricount-style group expense and debt splitting companion for LekFlow.',
         theme_color: '#059669',
         background_color: '#f8fafc',
