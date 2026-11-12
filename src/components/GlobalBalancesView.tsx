@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import {
@@ -10,25 +10,66 @@ import {
   Loader2,
   Sparkles,
 } from 'lucide-react';
-import { formatCurrency } from '../utils/currencies';
+import { formatCurrency, convertFromALL, fetchExchangeRate } from '../utils/currencies';
 
 interface GlobalBalancesViewProps {
   onSelectGroup: (groupId: string) => void;
 }
 
 export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelectGroup }) => {
-  const groups = useQuery((api as any).groups?.getMyGroups || (api as any).groups?.listGroups) || [];
+  const groups = useQuery((api as any).groups?.getMyGroups || (api as any).groups?.listGroups);
   const isLoading = groups === undefined;
+
+  const prefs = useQuery((api as any).preferences?.getMyPreferences, {}) as
+    | { baseCurrency: string }
+    | undefined;
+  const baseCurrency: string = prefs?.baseCurrency ?? 'ALL';
+
+  const [liveRate, setLiveRate] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (baseCurrency === 'ALL') {
+      setLiveRate(1);
+      return;
+    }
+    fetchExchangeRate(baseCurrency, 'ALL')
+      .then((r) => {
+        if (!cancelled) setLiveRate(typeof r === 'number' && r > 0 ? r : null);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveRate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseCurrency]);
+
+  const fmtBase = (amountALL: number, showSign = false): string => {
+    const rate = liveRate ?? 1;
+    const inBase =
+      baseCurrency === 'ALL'
+        ? Math.round(amountALL)
+        : Number((amountALL / rate).toFixed(2));
+    return formatCurrency(inBase, baseCurrency, showSign);
+  };
 
   let totalReceivableALL = 0;
   let totalPayableALL = 0;
 
   const groupSummaries = (Array.isArray(groups) ? groups : []).map((group: any) => {
-    const netBalance = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
-    if (netBalance > 0) {
-      totalReceivableALL += netBalance;
-    } else if (netBalance < 0) {
-      totalPayableALL += Math.abs(netBalance);
+    const groupCurrency = group.currency || 'ALL';
+    const netBalanceALL = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
+    const netBalanceGroup =
+      typeof group.myNetBalanceGroup === 'number'
+        ? group.myNetBalanceGroup
+        : groupCurrency === 'ALL'
+          ? netBalanceALL
+          : convertFromALL(netBalanceALL, groupCurrency);
+
+    if (netBalanceALL > 0) {
+      totalReceivableALL += netBalanceALL;
+    } else if (netBalanceALL < 0) {
+      totalPayableALL += Math.abs(netBalanceALL);
     }
 
     const memberCount =
@@ -41,9 +82,9 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
     return {
       id: group._id,
       name: group.name,
-      currency: group.currency || 'ALL',
+      currency: groupCurrency,
       memberCount,
-      netBalance,
+      netBalanceGroup,
     };
   });
 
@@ -69,7 +110,7 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
             <div>
               <h3 className="text-sm font-bold text-slate-900">Global Net Position</h3>
               <p className="text-[10px] text-slate-400">
-                Across {groupSummaries.length} active group{groupSummaries.length === 1 ? '' : 's'}
+                Across {groupSummaries.length} active group{groupSummaries.length === 1 ? '' : 's'} ({baseCurrency})
               </p>
             </div>
           </div>
@@ -94,7 +135,7 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
               }`}
             >
               {netPosition > 0 ? '+' : ''}
-              {formatCurrency(netPosition, 'ALL')}
+              {fmtBase(netPosition)}
             </span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1">
@@ -113,7 +154,7 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
               <span>Owed To You</span>
             </div>
             <p className="text-base font-mono font-bold text-emerald-700">
-              {formatCurrency(totalReceivableALL, 'ALL')}
+              {fmtBase(totalReceivableALL)}
             </p>
           </div>
 
@@ -123,7 +164,7 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
               <span>You Owe</span>
             </div>
             <p className="text-base font-mono font-bold text-rose-700">
-              {formatCurrency(totalPayableALL, 'ALL')}
+              {fmtBase(totalPayableALL)}
             </p>
           </div>
         </div>
@@ -153,9 +194,9 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
                 <div className="flex items-center gap-3 min-w-0">
                   <div
                     className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 font-bold text-sm ${
-                      g.netBalance > 0
+                      g.netBalanceGroup > 0
                         ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                        : g.netBalance < 0
+                        : g.netBalanceGroup < 0
                         ? 'bg-rose-50 text-rose-600 border border-rose-200'
                         : 'bg-slate-100 text-slate-600 border border-slate-200'
                     }`}
@@ -177,20 +218,20 @@ export const GlobalBalancesView: React.FC<GlobalBalancesViewProps> = ({ onSelect
                   <div className="text-right">
                     <p
                       className={`text-sm font-mono font-bold ${
-                        g.netBalance > 0
+                        g.netBalanceGroup > 0
                           ? 'text-emerald-600'
-                          : g.netBalance < 0
+                          : g.netBalanceGroup < 0
                           ? 'text-rose-600'
                           : 'text-slate-400'
                       }`}
                     >
-                      {g.netBalance > 0 ? '+' : ''}
-                      {formatCurrency(g.netBalance, g.currency)}
+                      {g.netBalanceGroup > 0 ? '+' : ''}
+                      {formatCurrency(g.netBalanceGroup, g.currency)}
                     </p>
                     <p className="text-[10px] text-slate-400 font-medium">
-                      {g.netBalance > 0
+                      {g.netBalanceGroup > 0
                         ? 'you get back'
-                        : g.netBalance < 0
+                        : g.netBalanceGroup < 0
                         ? 'you owe'
                         : 'settled'}
                     </p>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery } from 'convex/react';
 import { useUser } from '@clerk/clerk-react';
 import { api } from '../../convex/_generated/api';
@@ -11,7 +11,7 @@ import { AddExpenseModal } from './AddExpenseModal';
 import { AddMemberModal } from './AddMemberModal';
 import { SettleDebtModal } from './SettleDebtModal';
 import { GroupSettingsModal } from './GroupSettingsModal';
-import { calculateBalances, simplifyDebts } from '../utils/debtCalculator';
+import { simplifyDebts } from '../utils/debtCalculator';
 import { fetchExchangeRate, formatCurrency, EXCHANGE_RATES } from '../utils/currencies';
 
 interface GroupDetailViewProps {
@@ -47,86 +47,131 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     const fallback = EXCHANGE_RATES[groupCurrency];
     return fallback ? 1 / fallback : 1;
   });
-  const [fxFailSafe, setFxFailSafe] = useState<boolean>(groupCurrency !== 'ALL');
 
   useEffect(() => {
     let cancelled = false;
     if (groupCurrency === 'ALL') {
       setRate(1);
-      setFxFailSafe(false);
       return;
     }
-    setFxFailSafe(true);
     fetchExchangeRate('ALL', groupCurrency)
       .then((r) => {
-        if (cancelled) return;
-        if (typeof r === 'number' && r > 0) {
+        if (!cancelled && typeof r === 'number' && r > 0) {
           setRate(r);
-          setFxFailSafe(false);
-        } else {
-          setFxFailSafe(true);
         }
       })
-      .catch(() => {
-        if (!cancelled) setFxFailSafe(true);
-      });
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [groupCurrency]);
 
-  const convertALL = (amountALL: number): number => {
-    const converted = amountALL * rate;
-    return Math.round(converted * 100) / 100;
+  const convertALLFallback = useCallback(
+    (amountALL: number): number => Math.round(amountALL * rate * 100) / 100,
+    [rate]
+  );
+
+  const getExpenseGroupAmount = useCallback(
+    (exp: any): number => {
+      if (typeof exp.amountInGroupCurrency === 'number') return exp.amountInGroupCurrency;
+      if (exp.currency === groupCurrency) return exp.amount;
+      return convertALLFallback(exp.amountInALL);
+    },
+    [groupCurrency, convertALLFallback]
+  );
+
+  const getSplitGroupAmount = useCallback(
+    (split: any, exp: any): number => {
+      if (typeof split.amountGroup === 'number') return split.amountGroup;
+      if (exp.currency === groupCurrency && exp.amountInALL > 0) {
+        return Math.round(((split.amountALL / exp.amountInALL) * exp.amount) * 100) / 100;
+      }
+      return convertALLFallback(split.amountALL);
+    },
+    [groupCurrency, convertALLFallback]
+  );
+
+  const getSettlementGroupAmount = useCallback(
+    (set: any): number => {
+      if (typeof set.amountInGroupCurrency === 'number') return set.amountInGroupCurrency;
+      if (set.currency === groupCurrency && typeof set.amount === 'number') return set.amount;
+      return convertALLFallback(set.amountALL);
+    },
+    [groupCurrency, convertALLFallback]
+  );
+
+  const fmtGroup = (amountGroup: number, showSign = false): string => {
+    return formatCurrency(Math.round(amountGroup * 100) / 100, groupCurrency, showSign);
   };
 
-  const fmtGroup = (amountALL: number, showSign = false): string => {
-    if (fxFailSafe) {
-      return formatCurrency(amountALL, 'ALL', showSign);
+  // Compute net member balances directly in groupCurrency without ALL round-trip drift
+  const balancesInGroup = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!details) return map;
+
+    for (const m of details.members) {
+      map.set(m._id, 0);
     }
-    return formatCurrency(convertALL(amountALL), groupCurrency, showSign);
-  };
 
-  const balances = useMemo(() => {
-    if (!details) return new Map<string, number>();
-    return calculateBalances(details.members, details.expenses, details.settlements || []);
-  }, [details]);
+    for (const exp of details.expenses) {
+      const expTotal = getExpenseGroupAmount(exp);
+      map.set(exp.paidByMemberId, (map.get(exp.paidByMemberId) ?? 0) + expTotal);
+      for (const split of exp.splits) {
+        const share = getSplitGroupAmount(split, exp);
+        map.set(split.memberId, (map.get(split.memberId) ?? 0) - share);
+      }
+    }
+
+    for (const set of details.settlements || []) {
+      const setAmt = getSettlementGroupAmount(set);
+      map.set(set.fromMemberId, (map.get(set.fromMemberId) ?? 0) + setAmt);
+      map.set(set.toMemberId, (map.get(set.toMemberId) ?? 0) - setAmt);
+    }
+
+    for (const [id, val] of map.entries()) {
+      map.set(id, Math.round(val * 100) / 100);
+    }
+
+    return map;
+  }, [details, getExpenseGroupAmount, getSplitGroupAmount, getSettlementGroupAmount]);
 
   const simplifiedDebts = useMemo(() => {
     if (!details) return [];
-    return simplifyDebts(details.members, balances);
-  }, [details, balances]);
+    return simplifyDebts(details.members, balancesInGroup);
+  }, [details, balancesInGroup]);
 
   const memberSpending = useMemo(() => {
-    if (!details) return new Map<string, number>();
     const map = new Map<string, number>();
+    if (!details) return map;
     details.members.forEach((m: { _id: string }) => map.set(m._id, 0));
-    details.expenses.forEach((exp: { paidByMemberId: string; amountInALL: number }) => {
+    details.expenses.forEach((exp: any) => {
       const current = map.get(exp.paidByMemberId) ?? 0;
-      map.set(exp.paidByMemberId, current + exp.amountInALL);
+      map.set(exp.paidByMemberId, current + getExpenseGroupAmount(exp));
     });
     return map;
-  }, [details]);
+  }, [details, getExpenseGroupAmount]);
 
   const categoryTotals = useMemo(() => {
     if (!details) return [];
     const totals: Record<string, number> = {};
     let totalSpent = 0;
-    details.expenses.forEach((exp: { category?: string; amountInALL: number }) => {
+    details.expenses.forEach((exp: any) => {
       const cat = exp.category?.trim() || 'General';
-      totals[cat] = (totals[cat] || 0) + exp.amountInALL;
-      totalSpent += exp.amountInALL;
+      const amt = getExpenseGroupAmount(exp);
+      totals[cat] = (totals[cat] || 0) + amt;
+      totalSpent += amt;
     });
     return Object.entries(totals)
       .map(([category, amount]) => ({
-        category, amount,
+        category,
+        amount,
         percentage: totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [details]);
+  }, [details, getExpenseGroupAmount]);
 
-  const totalGroupSpentALL = useMemo(() => {
+  const totalGroupSpent = useMemo(() => {
     if (!details) return 0;
-    return details.expenses.reduce((sum: number, exp: { amountInALL: number }) => sum + exp.amountInALL, 0);
-  }, [details]);
+    return details.expenses.reduce((sum: number, exp: any) => sum + getExpenseGroupAmount(exp), 0);
+  }, [details, getExpenseGroupAmount]);
 
   if (!details) {
     return (
@@ -149,10 +194,10 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleQuickSettle = (fromId: string, toId: string, amountALL: number) => {
+  const handleQuickSettle = (fromId: string, toId: string, amountGroup: number) => {
     setSettleFrom(fromId);
     setSettleTo(toId);
-    setSettleAmount(amountALL);
+    setSettleAmount(amountGroup);
     setShowSettle(true);
   };
 
@@ -270,7 +315,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                       Total Group Volume
                     </p>
                     <p className="text-base font-black text-slate-900 font-mono truncate">
-                      {fmtGroup(totalGroupSpentALL)}
+                      {fmtGroup(totalGroupSpent)}
                     </p>
                   </div>
                 </div>
@@ -346,6 +391,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                 expenses.map((exp: any) => {
                   const isSameCurrency = exp.currency === group.currency;
                   const paidByMember = members.find((m: any) => m._id === exp.paidByMemberId)?.name || 'Someone';
+                  const expGroupAmt = getExpenseGroupAmount(exp);
                   return (
                     <div
                       key={exp._id}
@@ -373,7 +419,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                           </div>
                           {!isSameCurrency && (
                             <div className="font-mono text-[10px] text-slate-400">
-                              ≈ {fmtGroup(exp.amountInALL)}
+                              ≈ {fmtGroup(expGroupAmt)}
                             </div>
                           )}
                         </div>
@@ -431,16 +477,13 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                   Member Net Positions
                 </h3>
                 <span className="text-xs text-slate-500 font-medium">
-                  {fxFailSafe ? 'ALL (base)' : group.currency}
+                  {group.currency}
                 </span>
               </div>
               <div className="space-y-2">
                 {members.map((m: { _id: string; name: string }) => {
-                  const netALL = balances.get(m._id) ?? 0;
-                  const net = fxFailSafe ? Math.round(netALL) : Math.round(convertALL(netALL) * 100) / 100;
-                  const display = fxFailSafe
-                    ? formatCurrency(net, 'ALL', true)
-                    : formatCurrency(net, group.currency, true);
+                  const net = balancesInGroup.get(m._id) ?? 0;
+                  const display = formatCurrency(net, group.currency, true);
                   return (
                     <div key={m._id} className="flex items-center justify-between text-sm py-1 gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -483,6 +526,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         onClose={() => setShowSettle(false)}
         groupId={groupId}
         groupCurrency={group.currency}
+        allowedCurrencies={allowedCurrencies}
         members={members}
         initialFromMemberId={settleFrom}
         initialToMemberId={settleTo}

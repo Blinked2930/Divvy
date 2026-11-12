@@ -1,3 +1,4 @@
+// src/utils/currencies.ts
 export interface CurrencyInfo {
   code: string;
   name: string;
@@ -50,7 +51,7 @@ export const GLOBAL_CURRENCIES: CurrencyInfo[] = [
 export const EXCHANGE_RATES: Record<string, number> = {
   ALL: 1,
   EUR: 100,
-  USD: 92,
+  USD: 90,
   GBP: 118,
   CHF: 105,
   CAD: 68,
@@ -73,30 +74,32 @@ const rateCache: Record<string, { rate: number; timestamp: number }> = {};
 const CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour cache
 
 export async function fetchExchangeRate(fromCurrency: string, toCurrency: string): Promise<number> {
-  if (fromCurrency === toCurrency) return 1;
+  const from = fromCurrency.trim().toUpperCase();
+  const to = toCurrency.trim().toUpperCase();
+  if (from === to) return 1;
 
-  const cacheKey = `${fromCurrency}_${toCurrency}`;
+  const cacheKey = `${from}_${to}`;
   const cached = rateCache[cacheKey];
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.rate;
   }
 
   try {
-    const res = await fetch(`https://open.er-api.com/v6/latest/${fromCurrency}`);
+    const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
     if (!res.ok) throw new Error('FX rate fetch failed');
     const data = await res.json();
-    const rate = data?.rates?.[toCurrency];
+    const rate = data?.rates?.[to];
 
-    if (rate && typeof rate === 'number') {
+    if (rate && typeof rate === 'number' && Number.isFinite(rate) && rate > 0) {
       rateCache[cacheKey] = { rate, timestamp: Date.now() };
       return rate;
     }
   } catch (err) {
-    console.warn(`Could not fetch live rate for ${fromCurrency} -> ${toCurrency}, using fallback.`, err);
+    console.warn(`Could not fetch live rate for ${from} -> ${to}, using fallback.`, err);
   }
 
-  const fromRate = EXCHANGE_RATES[fromCurrency];
-  const toRate = EXCHANGE_RATES[toCurrency];
+  const fromRate = EXCHANGE_RATES[from];
+  const toRate = EXCHANGE_RATES[to];
   if (fromRate && toRate) {
     return fromRate / toRate;
   }
@@ -109,38 +112,41 @@ export function formatCurrency(
   currency: string = "ALL",
   showSign: boolean = false
 ): string {
+  const code = currency.trim().toUpperCase();
   const isNegative = amount < 0;
   const absAmount = Math.abs(amount);
   const signPrefix = showSign ? (isNegative ? "-" : "+") : isNegative ? "-" : "";
 
-  if (currency === "ALL") {
+  if (code === "ALL") {
     const formatted = Math.round(absAmount).toLocaleString("en-US");
     return `${signPrefix}${formatted} L`;
   }
 
-  const found = GLOBAL_CURRENCIES.find((c) => c.code === currency);
-  const symbol = found ? found.symbol : (CURRENCY_SYMBOLS[currency] || currency);
+  const found = GLOBAL_CURRENCIES.find((c) => c.code === code);
+  const symbol = found ? found.symbol : (CURRENCY_SYMBOLS[code] || code);
 
   const formatted = absAmount.toLocaleString("en-US", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 
-  if (symbol === currency || symbol.length > 2) {
-    return `${signPrefix}${formatted} ${currency}`;
+  if (symbol === code || symbol.length > 2) {
+    return `${signPrefix}${formatted} ${code}`;
   }
 
   return `${signPrefix}${symbol}${formatted}`;
 }
 
-export function convertToALL(amount: number, currency: string): number {
-  if (currency === "ALL") return Math.round(amount);
-  const rate = EXCHANGE_RATES[currency] || 1;
-  return Math.round(amount * rate);
+export function convertToALL(amount: number, currency: string, customRate?: number): number {
+  const code = currency.trim().toUpperCase();
+  if (code === "ALL") return Math.round(amount * 100) / 100;
+  const rate = customRate ?? EXCHANGE_RATES[code] ?? 1;
+  return Math.round(amount * rate * 100) / 100;
 }
 
-export function convertFromALL(amountALL: number, currency: string): number {
-  if (currency === "ALL") return Math.round(amountALL);
-  const rate = EXCHANGE_RATES[currency] || 1;
+export function convertFromALL(amountALL: number, currency: string, customRateToALL?: number): number {
+  const code = currency.trim().toUpperCase();
+  if (code === "ALL") return Math.round(amountALL);
+  const rate = customRateToALL ?? EXCHANGE_RATES[code] ?? 1;
   return Number((amountALL / rate).toFixed(2));
 }

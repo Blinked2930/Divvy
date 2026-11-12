@@ -1,10 +1,11 @@
+// src/components/AddExpenseModal.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import { X, Receipt, Check, Calculator, PieChart, Users, AlertCircle, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
-import { fetchExchangeRate } from '../utils/currencies';
-import { allocateByShares } from '../utils/splitMath';
+import { fetchExchangeRate, formatCurrency } from '../utils/currencies';
+import { allocateByShares, reconstructSharesFromAmounts } from '../utils/splitMath';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface Member {
@@ -29,7 +30,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   onClose,
   groupId,
   groupCurrency,
-  allowedCurrencies = ['ALL', 'EUR', 'USD'],
+  allowedCurrencies = ['EUR', 'USD', 'ALL'],
   members,
   initialExpense,
 }) => {
@@ -40,7 +41,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [title, setTitle] = useState(initialExpense?.title || initialExpense?.description || '');
   const [amount, setAmount] = useState(initialExpense ? String(initialExpense.amount) : '');
   const [selectedCurrency, setSelectedCurrency] = useState<string>(initialExpense?.currency || groupCurrency);
-  const [customFxRate, setCustomFxRate] = useState<string>('1');
+  const [fxRateToGroup, setFxRateToGroup] = useState<string>('1');
+  const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
   const [category, setCategory] = useState(initialExpense?.category || 'General');
   const [paidByMemberId, setPaidByMemberId] = useState<string>(initialExpense?.paidByMemberId || members[0]?._id || '');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(members.map((m) => m._id));
@@ -58,61 +60,130 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
 
   const categories = ['Food & Dining', 'Transportation', 'Accommodation', 'Utilities', 'Entertainment', 'General'];
 
+  const currencyChoices = useMemo(() => {
+    const set = new Set<string>([groupCurrency, ...allowedCurrencies]);
+    if (selectedCurrency) set.add(selectedCurrency);
+    return Array.from(set);
+  }, [groupCurrency, allowedCurrencies, selectedCurrency]);
+
   useEffect(() => {
-    if (isOpen) {
-      if (initialExpense) {
-        setTitle(initialExpense.title || initialExpense.description || '');
-        setAmount(String(initialExpense.amount));
-        setSelectedCurrency(initialExpense.currency || groupCurrency);
-        setCategory(initialExpense.category || 'General');
-        setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
-        setSplitMode(initialExpense.splitType || 'equal');
-      } else {
-        setSelectedCurrency(groupCurrency);
+    if (!isOpen) return;
+
+    const initialShares: Record<string, number> = {};
+    const initialExacts: Record<string, string> = {};
+    members.forEach((m) => {
+      initialShares[m._id] = 1;
+      initialExacts[m._id] = '';
+    });
+
+    if (initialExpense) {
+      const expCurrency = initialExpense.currency || groupCurrency;
+      const savedGroupTotal =
+        initialExpense.amountInGroupCurrency ??
+        (expCurrency === groupCurrency ? initialExpense.amount : undefined);
+      const inferredGroupRate =
+        initialExpense.fxRateToGroup ??
+        (expCurrency === groupCurrency
+          ? 1
+          : initialExpense.amount > 0 && savedGroupTotal
+            ? Math.round((savedGroupTotal / initialExpense.amount) * 10000) / 10000
+            : undefined);
+
+      setTitle(initialExpense.title || initialExpense.description || '');
+      setAmount(String(initialExpense.amount));
+      setSelectedCurrency(expCurrency);
+      if (inferredGroupRate) setFxRateToGroup(String(inferredGroupRate));
+      setCategory(initialExpense.category || 'General');
+      setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
+      setSplitMode(initialExpense.splitType || 'equal');
+
+      const existingSplits: Array<{ memberId: string; amountGroup?: number; amountALL: number }> =
+        initialExpense.splits ?? [];
+      const activeIds = existingSplits.filter((s) => (s.amountGroup ?? s.amountALL) > 0).map((s) => s.memberId);
+      setSelectedMemberIds(activeIds.length > 0 ? activeIds : members.map((m) => m._id));
+
+      if (initialExpense.splitType === 'shares') {
+        const reconstructed = reconstructSharesFromAmounts(
+          existingSplits.map((s) => ({
+            memberId: s.memberId,
+            amountALL: s.amountGroup ?? s.amountALL,
+          }))
+        );
+        members.forEach((m) => {
+          initialShares[m._id] = reconstructed[m._id] ?? 0;
+        });
+      } else if (initialExpense.splitType === 'exact' && inferredGroupRate && inferredGroupRate > 0) {
+        existingSplits.forEach((s) => {
+          const groupAmt = s.amountGroup ?? 0;
+          const inNative = Math.round((groupAmt / inferredGroupRate) * 100) / 100;
+          initialExacts[s.memberId] = inNative > 0 ? String(inNative) : '';
+        });
       }
+    } else {
+      setTitle('');
+      setAmount('');
+      setSelectedCurrency(groupCurrency);
+      setFxRateToGroup('1');
+      setCategory('General');
+      setPaidByMemberId(members[0]?._id || '');
+      setSelectedMemberIds(members.map((m) => m._id));
+      setSplitMode('equal');
     }
+
+    setSharesMap(initialShares);
+    setExactAmounts(initialExacts);
+    setErrorMsg(null);
   }, [isOpen, groupCurrency, initialExpense, members]);
 
+  // Fetch rate from selectedCurrency -> groupCurrency (ONLY when they differ)
   useEffect(() => {
-    if (members.length > 0) {
-      if (!paidByMemberId) setPaidByMemberId(members[0]._id);
-      setSelectedMemberIds(members.map((m) => m._id));
-
-      const initialShares: Record<string, number> = {};
-      const initialExacts: Record<string, string> = {};
-      members.forEach((m) => {
-        initialShares[m._id] = 1;
-        initialExacts[m._id] = '';
-      });
-      setSharesMap(initialShares);
-      setExactAmounts(initialExacts);
-    }
-  }, [members]);
-
-  useEffect(() => {
+    if (!isOpen) return;
     if (selectedCurrency === groupCurrency) {
-      setCustomFxRate('1');
-    } else {
-      fetchExchangeRate(selectedCurrency, groupCurrency).then((rate: number) => {
-        setCustomFxRate(rate.toString());
-      });
+      setFxRateToGroup('1');
+      return;
     }
-  }, [selectedCurrency, groupCurrency]);
+    if (
+      initialExpense &&
+      initialExpense.currency === selectedCurrency &&
+      initialExpense.fxRateToGroup
+    ) {
+      return;
+    }
+    fetchExchangeRate(selectedCurrency, groupCurrency).then((rate: number) => {
+      setFxRateToGroup(String(Math.round(rate * 10000) / 10000));
+    });
+  }, [isOpen, selectedCurrency, groupCurrency, initialExpense]);
+
+  // Silently fetch groupCurrency -> ALL in the background for LekFlow cross-app sync
+  useEffect(() => {
+    if (!isOpen) return;
+    if (groupCurrency === 'ALL') {
+      setGroupToALLRate(1);
+      return;
+    }
+    fetchExchangeRate(groupCurrency, 'ALL').then((rate: number) => {
+      setGroupToALLRate(rate);
+    });
+  }, [isOpen, groupCurrency]);
 
   const numAmount = parseFloat(amount) || 0;
-  const numRate = parseFloat(customFxRate) || 1;
-  const baseConvertedAmount = Math.round(numAmount * numRate * 100) / 100;
+  const numRateToGroup = selectedCurrency === groupCurrency ? 1 : (parseFloat(fxRateToGroup) || 0);
+  const amountInGroupCurrency = Math.round(numAmount * numRateToGroup * 100) / 100;
+  const amountInALL =
+    groupCurrency === 'ALL'
+      ? amountInGroupCurrency
+      : Math.round(amountInGroupCurrency * groupToALLRate * 100) / 100;
 
   const totalShares = selectedMemberIds.reduce((sum, id) => {
-    return sum + (sharesMap[id] || 1);
+    return sum + (sharesMap[id] ?? 1);
   }, 0);
 
-  const sharesAllocation = useMemo(() => {
+  const sharesAllocationGroup = useMemo(() => {
     if (splitMode !== 'shares' || selectedMemberIds.length === 0) return {};
     const weights: Record<string, number> = {};
     for (const mId of selectedMemberIds) weights[mId] = sharesMap[mId] ?? 1;
-    return allocateByShares(baseConvertedAmount, weights);
-  }, [splitMode, selectedMemberIds, sharesMap, baseConvertedAmount]);
+    return allocateByShares(amountInGroupCurrency, weights);
+  }, [splitMode, selectedMemberIds, sharesMap, amountInGroupCurrency]);
 
   if (!isOpen) return null;
 
@@ -126,11 +197,11 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     }
   };
 
-  const totalExactAllocated = selectedMemberIds.reduce((sum, id) => {
-    return sum + (parseFloat(exactAmounts[id] || '0') || 0);
+  const totalExactNative = members.reduce((sum, m) => {
+    return sum + (parseFloat(exactAmounts[m._id] || '0') || 0);
   }, 0);
 
-  const exactDifference = Math.round((baseConvertedAmount - totalExactAllocated) * 100) / 100;
+  const exactDifferenceNative = Math.round((numAmount - totalExactNative) * 100) / 100;
 
   const handleDeleteConfirmed = async () => {
     const expId = initialExpense?._id || initialExpense?.id;
@@ -157,81 +228,95 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       return;
     }
 
-    let splits: { memberId: Id<'groupMembers'>; amountALL: number }[] = [];
+    if (numRateToGroup <= 0 || amountInGroupCurrency <= 0) {
+      setErrorMsg(`Please enter a valid exchange rate from ${selectedCurrency} to ${groupCurrency}.`);
+      return;
+    }
+
+    let groupSplits: Array<{ memberId: Id<'groupMembers'>; amountGroup: number }> = [];
 
     if (splitMode === 'equal') {
       const weights: Record<string, number> = {};
       for (const mId of selectedMemberIds) weights[mId] = 1;
-      const allocation = allocateByShares(baseConvertedAmount, weights);
-      splits = selectedMemberIds.map((mId) => ({
+      const allocation = allocateByShares(amountInGroupCurrency, weights);
+      groupSplits = selectedMemberIds.map((mId) => ({
         memberId: mId as Id<'groupMembers'>,
-        amountALL: allocation[mId] ?? 0,
+        amountGroup: allocation[mId] ?? 0,
       }));
     } else if (splitMode === 'exact') {
-      // The exact amounts the user typed are in the GROUP's currency.
-      // Convert them to ALL using the same rate that produced
-      // baseConvertedAmount, so the sum matches amountInALL exactly.
-      if (Math.abs(exactDifference) > 0.05) {
+      if (Math.abs(exactDifferenceNative) > 0.01) {
         setErrorMsg(
-          `Exact splits must sum to ${baseConvertedAmount} ${groupCurrency}. Remaining: ${exactDifference} ${groupCurrency}`
+          `Exact splits must sum to ${numAmount} ${selectedCurrency}. Remaining: ${exactDifferenceNative} ${selectedCurrency}`
         );
         return;
       }
-      const rawInGroupCurrency = selectedMemberIds.map((mId) => {
-        const v = parseFloat(exactAmounts[mId] || '0') || 0;
-        return { memberId: mId as Id<'groupMembers'>, value: v };
-      });
-      // Round each to the cent in group currency first.
-      const roundedInGroupCurrency = rawInGroupCurrency.map((x) => ({
+
+      const activeExact = members
+        .map((m) => ({
+          memberId: m._id,
+          nativeValue: Math.round((parseFloat(exactAmounts[m._id] || '0') || 0) * 100) / 100,
+        }))
+        .filter((x) => x.nativeValue > 0);
+
+      if (activeExact.length === 0) {
+        setErrorMsg('Please enter an amount for at least one member.');
+        return;
+      }
+
+      const converted = activeExact.map((x) => ({
         memberId: x.memberId,
-        value: Math.round(x.value * 100) / 100,
+        amountGroup: Math.round(x.nativeValue * numRateToGroup * 100) / 100,
       }));
-      // Convert each to ALL using the same rate.
-      const converted = roundedInGroupCurrency.map((x) => ({
-        memberId: x.memberId,
-        amountALL: Math.round(x.value * numRate * 100) / 100,
-      }));
-      // Reconcile the 1-cent drift that can appear after conversion.
-      const sumConverted = converted.reduce((s, x) => s + x.amountALL, 0);
-      const drift = Math.round((baseConvertedAmount - sumConverted) * 100) / 100;
+
+      const sumConverted = converted.reduce((s, x) => s + x.amountGroup, 0);
+      const drift = Math.round((amountInGroupCurrency - sumConverted) * 100) / 100;
       if (Math.abs(drift) >= 0.01) {
-        // Push the residual into the largest contributor (deterministic).
         let largestIdx = 0;
         for (let i = 1; i < converted.length; i++) {
-          if (converted[i].amountALL > converted[largestIdx].amountALL) largestIdx = i;
+          if (converted[i].amountGroup > converted[largestIdx].amountGroup) largestIdx = i;
         }
-        converted[largestIdx].amountALL = Math.round((converted[largestIdx].amountALL + drift) * 100) / 100;
+        converted[largestIdx].amountGroup = Math.round((converted[largestIdx].amountGroup + drift) * 100) / 100;
       }
-      splits = converted;
+
+      groupSplits = converted;
     } else if (splitMode === 'shares') {
       if (totalShares <= 0) {
         setErrorMsg('Total shares must be at least 1.');
         return;
       }
-      splits = selectedMemberIds.map((mId) => ({
-        memberId: mId as Id<'groupMembers'>,
-        amountALL: sharesAllocation[mId] ?? 0,
-      }));
+      groupSplits = selectedMemberIds
+        .filter((mId) => (sharesMap[mId] ?? 1) > 0)
+        .map((mId) => ({
+          memberId: mId as Id<'groupMembers'>,
+          amountGroup: sharesAllocationGroup[mId] ?? 0,
+        }));
     }
 
-    // Final guard: never send to backend with mismatched sums.
-    const sumSplits = splits.reduce((s, x) => s + x.amountALL, 0);
-    if (Math.abs(sumSplits - baseConvertedAmount) > 0.01) {
-      setErrorMsg(
-        `Internal error: split sum (${sumSplits.toFixed(2)}) does not match expense total (${baseConvertedAmount.toFixed(2)}). Please reopen the modal.`
-      );
-      return;
-    }
+    // Derive proportional ALL splits silently so LekFlow cross-app sync remains 100% balanced
+    const weightsForALL: Record<string, number> = {};
+    for (const s of groupSplits) weightsForALL[s.memberId] = Math.round(s.amountGroup * 100);
+    const allocALL = allocateByShares(amountInALL, weightsForALL);
+
+    const splits = groupSplits.map((s) => ({
+      memberId: s.memberId,
+      amountGroup: s.amountGroup,
+      amountALL: allocALL[s.memberId] ?? 0,
+    }));
 
     setIsSubmitting(true);
     try {
+      const fxRateToALL = numAmount > 0 ? Math.round((amountInALL / numAmount) * 1000000) / 1000000 : 1;
+
       if (initialExpense?._id || initialExpense?.id) {
         await updateExpenseMutation({
           expenseId: (initialExpense._id || initialExpense.id) as Id<'groupExpenses'>,
           title: title.trim(),
           amount: numAmount,
           currency: selectedCurrency,
-          amountInALL: baseConvertedAmount,
+          amountInGroupCurrency,
+          amountInALL,
+          fxRateToGroup: numRateToGroup,
+          fxRateToALL,
           category: category.trim() || 'General',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
           splitType: splitMode,
@@ -243,7 +328,10 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           title: title.trim(),
           amount: numAmount,
           currency: selectedCurrency,
-          amountInALL: baseConvertedAmount,
+          amountInGroupCurrency,
+          amountInALL,
+          fxRateToGroup: numRateToGroup,
+          fxRateToALL,
           category: category.trim() || 'General',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
           splitType: splitMode,
@@ -353,22 +441,23 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
+            {/* Only shown when expense currency differs from the group's currency (e.g. USD in a EUR group) */}
             {selectedCurrency !== groupCurrency && (
               <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-2 text-xs">
                 <div className="flex items-center justify-between font-bold text-amber-900">
                   <span className="flex items-center gap-1">
                     <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
-                    Convert to {groupCurrency}
+                    Group Currency Equivalent ({groupCurrency})
                   </span>
-                  <span className="font-mono">{baseConvertedAmount} {groupCurrency}</span>
+                  <span className="font-mono">{formatCurrency(amountInGroupCurrency, groupCurrency)}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-amber-700 text-[10px]">1 {selectedCurrency} =</span>
                   <input
                     type="number"
                     step="any"
-                    value={customFxRate}
-                    onChange={(e) => setCustomFxRate(e.target.value)}
+                    value={fxRateToGroup}
+                    onChange={(e) => setFxRateToGroup(e.target.value)}
                     className="w-24 px-2 py-1 rounded-xl bg-white border border-amber-300 font-mono text-xs text-amber-900 focus:outline-none focus:border-amber-500"
                   />
                   <span className="text-amber-700 text-[10px]">{groupCurrency}</span>
@@ -470,14 +559,11 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             {splitMode === 'exact' && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs px-1 font-medium">
-                  <span className="text-slate-500">Allocated: {totalExactAllocated} {groupCurrency}</span>
-                  <span className={Math.abs(exactDifference) <= 0.05 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                    {exactDifference === 0 ? 'Balanced' : `${exactDifference} ${groupCurrency} remaining`}
+                  <span className="text-slate-500">Allocated: {totalExactNative} {selectedCurrency}</span>
+                  <span className={Math.abs(exactDifferenceNative) <= 0.01 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                    {exactDifferenceNative === 0 ? 'Balanced' : `${exactDifferenceNative} ${selectedCurrency} remaining`}
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-400 px-1">
-                  Enter amounts in {groupCurrency}. They'll be converted to base Lek automatically.
-                </p>
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                   {members.map((m) => (
                     <div key={m._id} className="flex items-center justify-between gap-2 text-xs">
@@ -509,13 +595,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                   {members.map((m) => {
                     const currentShare = sharesMap[m._id] ?? 1;
-                    const calculatedPortion = sharesAllocation[m._id] ?? 0;
+                    const calculatedGroup = sharesAllocationGroup[m._id] ?? 0;
                     return (
                       <div key={m._id} className="flex items-center justify-between gap-2 text-xs">
-                        <div className="w-1/3 truncate">
+                        <div className="w-1/2 truncate">
                           <span className="font-semibold text-slate-700 block">{m.name}</span>
                           <span className="text-[10px] text-slate-400 font-mono">
-                            {calculatedPortion} {groupCurrency}
+                            {formatCurrency(calculatedGroup, groupCurrency)}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -582,7 +668,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   Allowed Currencies
                 </h4>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {allowedCurrencies.map((c) => (
+                  {currencyChoices.map((c) => (
                     <button
                       key={c}
                       type="button"

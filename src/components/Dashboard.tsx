@@ -52,19 +52,25 @@ export const Dashboard: React.FC = () => {
       return;
     }
     fetchExchangeRate(baseCurrency, 'ALL')
-      .then((r) => { if (!cancelled) setLiveRate(typeof r === 'number' && r > 0 ? r : null); })
-      .catch(() => { if (!cancelled) setLiveRate(null); });
-    return () => { cancelled = true; };
+      .then((r) => {
+        if (!cancelled) setLiveRate(typeof r === 'number' && r > 0 ? r : null);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveRate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [baseCurrency]);
 
   const fmtBase = (amountALL: number, showSign = false): string => {
     const rate = liveRate ?? 1;
-    const inBase = baseCurrency === 'ALL'
-      ? Math.round(amountALL)
-      : Number((amountALL / rate).toFixed(2));
+    const inBase =
+      baseCurrency === 'ALL'
+        ? Math.round(amountALL)
+        : Number((amountALL / rate).toFixed(2));
     return formatCurrency(inBase, baseCurrency, showSign);
   };
-  void convertFromALL;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -100,9 +106,9 @@ export const Dashboard: React.FC = () => {
         archivedGroups.push(group);
       } else {
         activeGroups.push(group);
-        const net = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
-        if (net > 0) totalReceivableALL += net;
-        else if (net < 0) totalPayableALL += Math.abs(net);
+        const netALL = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
+        if (netALL > 0) totalReceivableALL += netALL;
+        else if (netALL < 0) totalPayableALL += Math.abs(netALL);
       }
     }
   }
@@ -229,7 +235,14 @@ export const Dashboard: React.FC = () => {
               ) : (
                 activeGroups.map((group: any) => {
                   const displayCode = group.inviteCode || group._id.slice(-6).toUpperCase();
-                  const net = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
+                  const groupCurrency = group.currency || 'ALL';
+                  const netALL = group.myNetBalanceALL ?? group.netBalanceALL ?? group.netBalance ?? 0;
+                  const netGroup =
+                    typeof group.myNetBalanceGroup === 'number'
+                      ? group.myNetBalanceGroup
+                      : groupCurrency === 'ALL'
+                        ? netALL
+                        : convertFromALL(netALL, groupCurrency);
 
                   return (
                     <div
@@ -244,25 +257,25 @@ export const Dashboard: React.FC = () => {
                           </div>
                           <div>
                             <h4 className="font-bold text-slate-900 text-sm">{group.name}</h4>
-                            <p className="text-xs text-slate-400 font-medium">{group.currency || 'ALL'}</p>
+                            <p className="text-xs text-slate-400 font-medium">{groupCurrency}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="text-right">
                             <p
                               className={`text-xs font-mono font-bold ${
-                                net > 0
+                                netGroup > 0
                                   ? 'text-emerald-600'
-                                  : net < 0
+                                  : netGroup < 0
                                   ? 'text-rose-600'
                                   : 'text-slate-400'
                               }`}
                             >
-                              {net > 0 ? '+' : ''}
-                              {fmtBase(net)}
+                              {netGroup > 0 ? '+' : ''}
+                              {formatCurrency(netGroup, groupCurrency)}
                             </p>
                             <p className="text-[10px] text-slate-400 font-medium">
-                              {net > 0 ? 'get back' : net < 0 ? 'you owe' : 'settled'}
+                              {netGroup > 0 ? 'get back' : netGroup < 0 ? 'you owe' : 'settled'}
                             </p>
                           </div>
                           <ChevronRight className="w-5 h-5 text-slate-300" />
