@@ -68,7 +68,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onBack }) => {
             <div>
               <h2 className="text-sm font-bold text-slate-900">Base Currency</h2>
               <p className="text-[11px] text-slate-500">
-                Every aggregate in Splitup and LekFlow shows in this currency.
+                Every aggregate in Divvy and LekFlow shows in this currency.
               </p>
             </div>
           </div>

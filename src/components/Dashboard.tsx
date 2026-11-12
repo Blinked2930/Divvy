@@ -159,9 +159,9 @@ export const Dashboard: React.FC = () => {
         <div className="max-w-md mx-auto pb-3 px-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black text-sm shadow-sm">
-              S
+              D
             </div>
-            <span className="font-bold text-slate-900 text-lg tracking-tight">Splitup</span>
+            <span className="font-bold text-slate-900 text-lg tracking-tight">Divvy</span>
           </div>
 
           <div
