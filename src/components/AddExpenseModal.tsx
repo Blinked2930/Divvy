@@ -154,7 +154,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     });
   }, [isOpen, selectedCurrency, groupCurrency, initialExpense]);
 
-  // Silently fetch groupCurrency -> ALL in the background for LekFlow cross-app sync
+  // Silently fetch groupCurrency -> ALL in the background for Pulse cross-app sync
   useEffect(() => {
     if (!isOpen) return;
     if (groupCurrency === 'ALL') {
@@ -292,7 +292,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         }));
     }
 
-    // Derive proportional ALL splits silently so LekFlow cross-app sync remains 100% balanced
+    // Derive proportional ALL splits silently so Pulse cross-app sync remains 100% balanced
     const weightsForALL: Record<string, number> = {};
     for (const s of groupSplits) weightsForALL[s.memberId] = Math.round(s.amountGroup * 100);
     const allocALL = allocateByShares(amountInALL, weightsForALL);

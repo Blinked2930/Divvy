@@ -319,7 +319,7 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
 
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-              Payment Method (Syncs to LekFlow) *
+              Payment Method (Syncs to Pulse) *
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button

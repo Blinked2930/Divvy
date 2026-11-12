@@ -14,7 +14,7 @@ export default defineConfig({
       manifest: {
         name: 'Divvy — Expense & Debt Splitting',
         short_name: 'Divvy',
-        description: 'Tricount-style group expense and debt splitting companion for LekFlow.',
+        description: 'Tricount-style group expense and debt splitting companion for Pulse.',
         theme_color: '#059669',
         background_color: '#f8fafc',
         display: 'standalone',

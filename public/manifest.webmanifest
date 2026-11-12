@@ -1,7 +1,7 @@
 {
   "name": "Divvy — Expense & Debt Splitting",
   "short_name": "Divvy",
-  "description": "Tricount-style group expense and debt splitting companion for LekFlow.",
+  "description": "Tricount-style group expense and debt splitting companion for Pulse.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -9,7 +9,7 @@ export const LandingScreen: React.FC = () => {
       <header className="pt-6 flex justify-center">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
           <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-          <span>LekFlow Shared Backend</span>
+          <span>Pulse Shared Backend</span>
         </div>
       </header>
 
@@ -31,7 +31,7 @@ export const LandingScreen: React.FC = () => {
           <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-1">
             <Shield className="w-4 h-4 text-emerald-600" />
             <p className="text-xs font-bold text-slate-900">Shared Identity</p>
-            <p className="text-[11px] text-slate-500 leading-tight">Use your existing LekFlow account</p>
+            <p className="text-[11px] text-slate-500 leading-tight">Use your existing Pulse account</p>
           </div>
           <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-1">
             <Sparkles className="w-4 h-4 text-emerald-600" />
