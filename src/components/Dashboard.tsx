@@ -23,6 +23,12 @@ import { GroupDetailView } from './GroupDetailView';
 import { ActivityFeedView } from './ActivityFeedView';
 import { formatCurrency, convertFromALL, fetchExchangeRate } from '../utils/currencies';
 
+const BASE_CURRENCY_OPTIONS = [
+  { code: 'USD', label: 'USD' },
+  { code: 'ALL', label: 'ALL' },
+  { code: 'EUR', label: 'EUR' },
+] as const;
+
 export const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<SplitTab>('groups');
   const [selectedGroupId, setSelectedGroupId] = useState<Id<'groups'> | null>(null);
@@ -31,6 +37,7 @@ export const Dashboard: React.FC = () => {
   const [showArchived, setShowArchived] = useState(false);
   const [deepLinkCode, setDeepLinkCode] = useState<string | undefined>(undefined);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [optimisticCurrency, setOptimisticCurrency] = useState<string | null>(null);
 
   const groups = useQuery((api as any).groups?.getMyGroups || (api as any).groups?.listGroups, {
     includeArchived: true,
@@ -42,33 +49,52 @@ export const Dashboard: React.FC = () => {
   const prefs = useQuery((api as any).preferences?.getMyPreferences, {}) as
     | { baseCurrency: string }
     | undefined;
-  const baseCurrency: string = prefs?.baseCurrency ?? 'ALL';
+  const setBaseCurrencyMutation = useMutation((api as any).preferences?.setBaseCurrency);
 
-  const [liveRate, setLiveRate] = useState<number | null>(null);
+  const baseCurrency: string = optimisticCurrency ?? prefs?.baseCurrency ?? 'ALL';
+
+  useEffect(() => {
+    if (optimisticCurrency && prefs?.baseCurrency === optimisticCurrency) {
+      setOptimisticCurrency(null);
+    }
+  }, [prefs?.baseCurrency, optimisticCurrency]);
+
+  const handleSelectBaseCurrency = async (nextCurrency: string) => {
+    if (nextCurrency === baseCurrency) return;
+    setOptimisticCurrency(nextCurrency);
+    try {
+      if (setBaseCurrencyMutation) {
+        await setBaseCurrencyMutation({ baseCurrency: nextCurrency });
+      }
+    } catch (err) {
+      console.error('Failed to update base currency:', err);
+      setOptimisticCurrency(null);
+    }
+  };
+
+  const [liveRates, setLiveRates] = useState<Record<string, number>>({ ALL: 1 });
   useEffect(() => {
     let cancelled = false;
     if (baseCurrency === 'ALL') {
-      setLiveRate(1);
       return;
     }
     fetchExchangeRate(baseCurrency, 'ALL')
       .then((r) => {
-        if (!cancelled) setLiveRate(typeof r === 'number' && r > 0 ? r : null);
+        if (!cancelled && typeof r === 'number' && r > 0) {
+          setLiveRates((prev) => ({ ...prev, [baseCurrency]: r }));
+        }
       })
-      .catch(() => {
-        if (!cancelled) setLiveRate(null);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [baseCurrency]);
 
   const fmtBase = (amountALL: number, showSign = false): string => {
-    const rate = liveRate ?? 1;
     const inBase =
       baseCurrency === 'ALL'
         ? Math.round(amountALL)
-        : Number((amountALL / rate).toFixed(2));
+        : convertFromALL(amountALL, baseCurrency, liveRates[baseCurrency]);
     return formatCurrency(inBase, baseCurrency, showSign);
   };
 
@@ -136,6 +162,30 @@ export const Dashboard: React.FC = () => {
               S
             </div>
             <span className="font-bold text-slate-900 text-lg tracking-tight">Splitup</span>
+          </div>
+
+          <div
+            role="group"
+            aria-label="Display currency"
+            className="inline-flex items-center p-0.5 rounded-xl bg-slate-100 border border-slate-200/80"
+          >
+            {BASE_CURRENCY_OPTIONS.map((opt) => {
+              const active = baseCurrency === opt.code;
+              return (
+                <button
+                  key={opt.code}
+                  type="button"
+                  onClick={() => handleSelectBaseCurrency(opt.code)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold tracking-wide transition-all cursor-pointer ${
+                    active
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
