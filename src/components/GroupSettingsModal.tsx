@@ -1,3 +1,4 @@
+// src/components/GroupSettingsModal.tsx
 import React, { useState, useEffect } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
@@ -13,7 +14,7 @@ import {
   Trash2,
   AlertCircle,
 } from 'lucide-react';
-import { GLOBAL_CURRENCIES, CurrencyInfo } from '../utils/currencies';
+import { GLOBAL_CURRENCIES, CurrencyInfo, fetchExchangeRate } from '../utils/currencies';
 
 interface GroupSettingsModalProps {
   isOpen: boolean;
@@ -22,12 +23,6 @@ interface GroupSettingsModalProps {
   currentName: string;
   currentCurrency: string;
   currentAllowedCurrencies: string[];
-  /**
-   * True if the current user is the group's creator. Passed in from
-   * GroupDetailView (which reads Clerk's useUser()). If undefined, the
-   * modal optimistically shows owner actions — the backend still rejects
-   * non-owners for save/delete.
-   */
   isOwner?: boolean;
   isArchived?: boolean;
   onDeleted?: () => void;
@@ -72,8 +67,6 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Optimistic default: if parent hasn't told us, assume owner so the modal
-  // is fully usable; backend enforces owner-only on save/delete regardless.
   const owner = isOwner !== false;
 
   const toggleAllowed = (code: string) => {
@@ -107,11 +100,20 @@ export const GroupSettingsModal: React.FC<GroupSettingsModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      let fxRateToALL: number | undefined;
+      if (baseCurrency !== currentCurrency) {
+        fxRateToALL =
+          baseCurrency === 'ALL'
+            ? 1
+            : await fetchExchangeRate(baseCurrency, 'ALL');
+      }
+
       await updateSettingsMutation({
         groupId,
         name: name.trim(),
         currency: baseCurrency,
         allowedCurrencies: allowed,
+        fxRateToALL,
       });
       onClose();
     } catch (err: any) {
