@@ -25,6 +25,37 @@ interface AddExpenseModalProps {
 
 type SplitMode = 'equal' | 'exact' | 'shares';
 
+export const DIVVY_CATEGORIES = [
+  'Groceries',
+  'Eating Out',
+  'Housing & Bills',
+  'Transport',
+  'Shopping',
+  'Personal',
+  'Health & Wellness',
+  'Social & Fun',
+  'Travel',
+  'Other',
+] as const;
+
+function normalizeDivvyCategory(raw?: string): string {
+  if (!raw) return 'Other';
+  const trimmed = raw.trim();
+  const exact = DIVVY_CATEGORIES.find((c) => c.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact;
+  const s = trimmed.toLowerCase();
+  if (s.includes('grocer')) return 'Groceries';
+  if (s.includes('food') || s.includes('dining') || s.includes('eating')) return 'Eating Out';
+  if (s.includes('housing') || s.includes('bill') || s.includes('utilit')) return 'Housing & Bills';
+  if (s.includes('transport')) return 'Transport';
+  if (s.includes('shop')) return 'Shopping';
+  if (s.includes('personal')) return 'Personal';
+  if (s.includes('health') || s.includes('wellness') || s.includes('gym')) return 'Health & Wellness';
+  if (s.includes('social') || s.includes('fun') || s.includes('entertain')) return 'Social & Fun';
+  if (s.includes('travel') || s.includes('accommod') || s.includes('hotel')) return 'Travel';
+  return 'Other';
+}
+
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   isOpen,
   onClose,
@@ -43,7 +74,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [selectedCurrency, setSelectedCurrency] = useState<string>(initialExpense?.currency || groupCurrency);
   const [fxRateToGroup, setFxRateToGroup] = useState<string>('1');
   const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
-  const [category, setCategory] = useState(initialExpense?.category || 'General');
+  const [category, setCategory] = useState(normalizeDivvyCategory(initialExpense?.category));
   const [paidByMemberId, setPaidByMemberId] = useState<string>(initialExpense?.paidByMemberId || members[0]?._id || '');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(members.map((m) => m._id));
   const [splitMode, setSplitMode] = useState<SplitMode>(initialExpense?.splitType || 'equal');
@@ -57,8 +88,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const categories = ['Food & Dining', 'Transportation', 'Accommodation', 'Utilities', 'Entertainment', 'General'];
 
   const currencyChoices = useMemo(() => {
     const set = new Set<string>([groupCurrency, ...allowedCurrencies]);
@@ -93,7 +122,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setAmount(String(initialExpense.amount));
       setSelectedCurrency(expCurrency);
       if (inferredGroupRate) setFxRateToGroup(String(inferredGroupRate));
-      setCategory(initialExpense.category || 'General');
+      setCategory(normalizeDivvyCategory(initialExpense.category));
       setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
       setSplitMode(initialExpense.splitType || 'equal');
 
@@ -124,7 +153,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setAmount('');
       setSelectedCurrency(groupCurrency);
       setFxRateToGroup('1');
-      setCategory('General');
+      setCategory('Other');
       setPaidByMemberId(members[0]?._id || '');
       setSelectedMemberIds(members.map((m) => m._id));
       setSplitMode('equal');
@@ -317,7 +346,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           amountInALL,
           fxRateToGroup: numRateToGroup,
           fxRateToALL,
-          category: category.trim() || 'General',
+          category: category.trim() || 'Other',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
           splitType: splitMode,
           splits,
@@ -332,7 +361,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           amountInALL,
           fxRateToGroup: numRateToGroup,
           fxRateToALL,
-          category: category.trim() || 'General',
+          category: category.trim() || 'Other',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
           splitType: splitMode,
           splits,
@@ -704,7 +733,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   Select Category
                 </h4>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {categories.map((cat) => (
+                  {DIVVY_CATEGORIES.map((cat) => (
                     <button
                       key={cat}
                       type="button"

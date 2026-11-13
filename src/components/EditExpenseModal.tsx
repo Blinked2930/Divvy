@@ -8,6 +8,7 @@ import {
 import { allocateByShares, reconstructSharesFromAmounts } from '../utils/splitMath';
 import { fetchExchangeRate } from '../utils/currencies';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DIVVY_CATEGORIES } from './AddExpenseModal';
 
 interface Member {
   _id: Id<'groupMembers'>;
@@ -34,6 +35,24 @@ interface EditExpenseModalProps {
   members: Member[];
 }
 
+function normalizeDivvyCategory(raw?: string): string {
+  if (!raw) return 'Other';
+  const trimmed = raw.trim();
+  const exact = DIVVY_CATEGORIES.find((c) => c.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact;
+  const s = trimmed.toLowerCase();
+  if (s.includes('grocer')) return 'Groceries';
+  if (s.includes('food') || s.includes('dining') || s.includes('eating')) return 'Eating Out';
+  if (s.includes('housing') || s.includes('bill') || s.includes('utilit')) return 'Housing & Bills';
+  if (s.includes('transport')) return 'Transport';
+  if (s.includes('shop')) return 'Shopping';
+  if (s.includes('personal')) return 'Personal';
+  if (s.includes('health') || s.includes('wellness') || s.includes('gym')) return 'Health & Wellness';
+  if (s.includes('social') || s.includes('fun') || s.includes('entertain')) return 'Social & Fun';
+  if (s.includes('travel') || s.includes('accommod') || s.includes('hotel')) return 'Travel';
+  return 'Other';
+}
+
 export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   isOpen,
   onClose,
@@ -46,7 +65,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
 
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('General');
+  const [category, setCategory] = useState('Other');
   const [paidByMemberId, setPaidByMemberId] = useState<string>('');
   const [splitMode, setSplitMode] = useState<'equal' | 'exact' | 'shares'>('equal');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
@@ -62,8 +81,6 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
   // FX rate: groupCurrency -> ALL. Used to convert exact inputs between
   // group currency (what the user sees) and ALL (what we store).
   const [fxRateToALL, setFxRateToALL] = useState<number>(1);
-
-  const categories = ['Food & Dining', 'Transportation', 'Accommodation', 'Utilities', 'Entertainment', 'General'];
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +98,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
     if (expense) {
       setTitle(expense.title);
       setAmount(expense.amount.toString());
-      setCategory(expense.category || 'General');
+      setCategory(normalizeDivvyCategory(expense.category));
       setPaidByMemberId(expense.paidByMemberId);
       setSplitMode(expense.splitType || 'equal');
 
@@ -228,7 +245,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
         amount: numAmount,
         currency: groupCurrency,
         amountInALL,
-        category: category.trim(),
+        category: category.trim() || 'Other',
         paidByMemberId: paidByMemberId as Id<'groupMembers'>,
         splitType: splitMode,
         splits,
@@ -528,7 +545,7 @@ export const EditExpenseModal: React.FC<EditExpenseModalProps> = ({
                   Select Category
                 </h4>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {categories.map((cat) => (
+                  {DIVVY_CATEGORIES.map((cat) => (
                     <button
                       key={cat}
                       type="button"
