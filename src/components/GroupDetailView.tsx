@@ -1,3 +1,4 @@
+// src/components/GroupDetailView.tsx
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useQuery } from 'convex/react';
 import { useUser } from '@clerk/clerk-react';
@@ -71,8 +72,14 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
   const getExpenseGroupAmount = useCallback(
     (exp: any): number => {
-      if (typeof exp.amountInGroupCurrency === 'number') return exp.amountInGroupCurrency;
       if (exp.currency === groupCurrency) return exp.amount;
+      if (groupCurrency === 'ALL') return exp.amountInALL;
+      if (
+        typeof exp.amountInGroupCurrency === 'number' &&
+        Math.abs(exp.amountInGroupCurrency - exp.amountInALL) > 0.01
+      ) {
+        return exp.amountInGroupCurrency;
+      }
       return convertALLFallback(exp.amountInALL);
     },
     [groupCurrency, convertALLFallback]
@@ -80,9 +87,15 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
   const getSplitGroupAmount = useCallback(
     (split: any, exp: any): number => {
-      if (typeof split.amountGroup === 'number') return split.amountGroup;
       if (exp.currency === groupCurrency && exp.amountInALL > 0) {
         return Math.round(((split.amountALL / exp.amountInALL) * exp.amount) * 100) / 100;
+      }
+      if (groupCurrency === 'ALL') return split.amountALL;
+      if (
+        typeof split.amountGroup === 'number' &&
+        Math.abs(split.amountGroup - split.amountALL) > 0.01
+      ) {
+        return split.amountGroup;
       }
       return convertALLFallback(split.amountALL);
     },
@@ -91,8 +104,14 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
   const getSettlementGroupAmount = useCallback(
     (set: any): number => {
-      if (typeof set.amountInGroupCurrency === 'number') return set.amountInGroupCurrency;
       if (set.currency === groupCurrency && typeof set.amount === 'number') return set.amount;
+      if (groupCurrency === 'ALL') return set.amountALL;
+      if (
+        typeof set.amountInGroupCurrency === 'number' &&
+        Math.abs(set.amountInGroupCurrency - set.amountALL) > 0.01
+      ) {
+        return set.amountInGroupCurrency;
+      }
       return convertALLFallback(set.amountALL);
     },
     [groupCurrency, convertALLFallback]
