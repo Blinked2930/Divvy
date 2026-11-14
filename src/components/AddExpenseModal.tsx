@@ -3,7 +3,20 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
-import { X, Receipt, Check, Calculator, PieChart, Users, AlertCircle, ChevronDown, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  X,
+  Receipt,
+  Check,
+  Calculator,
+  PieChart,
+  Users,
+  AlertCircle,
+  ChevronDown,
+  RefreshCw,
+  Trash2,
+  CreditCard,
+  Banknote,
+} from 'lucide-react';
 import { fetchExchangeRate, formatCurrency } from '../utils/currencies';
 import { allocateByShares, reconstructSharesFromAmounts } from '../utils/splitMath';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -76,6 +89,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
   const [category, setCategory] = useState(normalizeDivvyCategory(initialExpense?.category));
   const [paidByMemberId, setPaidByMemberId] = useState<string>(initialExpense?.paidByMemberId || members[0]?._id || '');
+  const [paidWith, setPaidWith] = useState<'Card' | 'Cash'>(initialExpense?.paidWith || 'Card');
+  const [isBigExpense, setIsBigExpense] = useState<boolean>(Boolean(initialExpense?.isBigExpense));
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(members.map((m) => m._id));
   const [splitMode, setSplitMode] = useState<SplitMode>(initialExpense?.splitType || 'equal');
 
@@ -124,6 +139,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       if (inferredGroupRate) setFxRateToGroup(String(inferredGroupRate));
       setCategory(normalizeDivvyCategory(initialExpense.category));
       setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
+      setPaidWith(initialExpense.paidWith || 'Card');
+      setIsBigExpense(Boolean(initialExpense.isBigExpense));
       setSplitMode(initialExpense.splitType || 'equal');
 
       const existingSplits: Array<{ memberId: string; amountGroup?: number; amountALL: number }> =
@@ -155,6 +172,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setFxRateToGroup('1');
       setCategory('Other');
       setPaidByMemberId(members[0]?._id || '');
+      setPaidWith('Card');
+      setIsBigExpense(false);
       setSelectedMemberIds(members.map((m) => m._id));
       setSplitMode('equal');
     }
@@ -164,7 +183,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     setErrorMsg(null);
   }, [isOpen, groupCurrency, initialExpense, members]);
 
-  // Fetch rate from selectedCurrency -> groupCurrency (ONLY when they differ)
   useEffect(() => {
     if (!isOpen) return;
     if (selectedCurrency === groupCurrency) {
@@ -183,7 +201,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     });
   }, [isOpen, selectedCurrency, groupCurrency, initialExpense]);
 
-  // Silently fetch groupCurrency -> ALL in the background for Pulse cross-app sync
   useEffect(() => {
     if (!isOpen) return;
     if (groupCurrency === 'ALL') {
@@ -321,7 +338,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         }));
     }
 
-    // Derive proportional ALL splits silently so Pulse cross-app sync remains 100% balanced
     const weightsForALL: Record<string, number> = {};
     for (const s of groupSplits) weightsForALL[s.memberId] = Math.round(s.amountGroup * 100);
     const allocALL = allocateByShares(amountInALL, weightsForALL);
@@ -348,6 +364,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           fxRateToALL,
           category: category.trim() || 'Other',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
+          paidWith,
+          isBigExpense,
           splitType: splitMode,
           splits,
         });
@@ -363,6 +381,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
           fxRateToALL,
           category: category.trim() || 'Other',
           paidByMemberId: paidByMemberId as Id<'groupMembers'>,
+          paidWith,
+          isBigExpense,
           splitType: splitMode,
           splits,
         });
@@ -470,7 +490,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Only shown when expense currency differs from the group's currency (e.g. USD in a EUR group) */}
             {selectedCurrency !== groupCurrency && (
               <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-2 text-xs">
                 <div className="flex items-center justify-between font-bold text-amber-900">
@@ -520,6 +539,58 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                 >
                   <span className="truncate">{paidByName}</span>
                   <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                </button>
+              </div>
+            </div>
+
+            {/* Pulse Wallet & Budget Options */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Payment Method
+                </label>
+                <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setPaidWith('Card')}
+                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                      paidWith === 'Card'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    Card
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaidWith('Cash')}
+                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                      paidWith === 'Cash'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Banknote className="w-3.5 h-3.5" />
+                    Cash
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Budget Bucket
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setIsBigExpense((v) => !v)}
+                  className={`w-full py-2.5 px-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    isBigExpense
+                      ? 'bg-purple-50 border-purple-300 text-purple-700'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  {isBigExpense ? 'Big Expense' : 'Daily Budget'}
                 </button>
               </div>
             </div>
