@@ -44,77 +44,123 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
   const groupCurrency: string = details?.group?.currency ?? 'ALL';
 
-  const [rate, setRate] = useState<number>(() => {
-    const fallback = EXCHANGE_RATES[groupCurrency];
-    return fallback ? 1 / fallback : 1;
+  // Rate for converting 1 ALL -> groupCurrency
+  const [rateFromALL, setRateFromALL] = useState<number>(() => {
+    const fallbackToALL = EXCHANGE_RATES[groupCurrency];
+    return fallbackToALL ? 1 / fallbackToALL : 1;
   });
 
   useEffect(() => {
     let cancelled = false;
     if (groupCurrency === 'ALL') {
-      setRate(1);
+      setRateFromALL(1);
       return;
+    }
+    const fallbackToALL = EXCHANGE_RATES[groupCurrency];
+    if (fallbackToALL) {
+      setRateFromALL(1 / fallbackToALL);
     }
     fetchExchangeRate('ALL', groupCurrency)
       .then((r) => {
-        if (!cancelled && typeof r === 'number' && r > 0) {
-          setRate(r);
+        if (!cancelled && typeof r === 'number' && Number.isFinite(r) && r > 0) {
+          setRateFromALL(r);
         }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [groupCurrency]);
 
-  const convertALLFallback = useCallback(
-    (amountALL: number): number => Math.round(amountALL * rate * 100) / 100,
-    [rate]
+  const convertALLToGroup = useCallback(
+    (amountALL: number): number => {
+      if (groupCurrency === 'ALL') return Math.round(amountALL * 100) / 100;
+      return Math.round(amountALL * rateFromALL * 100) / 100;
+    },
+    [groupCurrency, rateFromALL]
   );
+
+  // Normalize canonical ALL amount first (guarding against pre-fix 1:1 non-ALL rows)
+  const getCanonicalALL = useCallback((exp: any): number => {
+    const cur = (exp.currency || 'ALL').trim().toUpperCase();
+    if (cur === 'ALL') return exp.amountInALL;
+    const rateToALL = EXCHANGE_RATES[cur];
+    if (rateToALL && rateToALL !== 1 && Math.abs(exp.amountInALL - exp.amount) < 0.001) {
+      return Math.round(exp.amount * rateToALL * 100) / 100;
+    }
+    return exp.amountInALL;
+  }, []);
 
   const getExpenseGroupAmount = useCallback(
     (exp: any): number => {
       if (exp.currency === groupCurrency) return exp.amount;
-      if (groupCurrency === 'ALL') return exp.amountInALL;
+      const canonicalALL = getCanonicalALL(exp);
+      if (groupCurrency === 'ALL') return canonicalALL;
+
+      const expectedGroup = convertALLToGroup(canonicalALL);
       if (
         typeof exp.amountInGroupCurrency === 'number' &&
-        Math.abs(exp.amountInGroupCurrency - exp.amountInALL) > 0.01
+        Number.isFinite(exp.amountInGroupCurrency) &&
+        exp.amountInGroupCurrency > 0
       ) {
-        return exp.amountInGroupCurrency;
+        // Reject stale 1:1 raw copies or ALL-era snapshots (e.g., 45,000 when expected is ~450)
+        const notRawCopy = Math.abs(exp.amountInGroupCurrency - exp.amount) > 0.01;
+        const notALLCopy = Math.abs(exp.amountInGroupCurrency - canonicalALL) > 0.01;
+        const withinReasonableFXBand =
+          expectedGroup > 0 &&
+          exp.amountInGroupCurrency >= expectedGroup * 0.5 &&
+          exp.amountInGroupCurrency <= expectedGroup * 2.0;
+
+        if ((notRawCopy && notALLCopy) || withinReasonableFXBand) {
+          return Math.round(exp.amountInGroupCurrency * 100) / 100;
+        }
       }
-      return convertALLFallback(exp.amountInALL);
+
+      return expectedGroup;
     },
-    [groupCurrency, convertALLFallback]
+    [groupCurrency, getCanonicalALL, convertALLToGroup]
   );
 
   const getSplitGroupAmount = useCallback(
     (split: any, exp: any): number => {
-      if (exp.currency === groupCurrency && exp.amountInALL > 0) {
-        return Math.round(((split.amountALL / exp.amountInALL) * exp.amount) * 100) / 100;
+      const expGroupTotal = getExpenseGroupAmount(exp);
+      if (exp.amountInALL > 0) {
+        return Math.round(((split.amountALL / exp.amountInALL) * expGroupTotal) * 100) / 100;
       }
       if (groupCurrency === 'ALL') return split.amountALL;
-      if (
-        typeof split.amountGroup === 'number' &&
-        Math.abs(split.amountGroup - split.amountALL) > 0.01
-      ) {
-        return split.amountGroup;
-      }
-      return convertALLFallback(split.amountALL);
+      return convertALLToGroup(split.amountALL);
     },
-    [groupCurrency, convertALLFallback]
+    [groupCurrency, getExpenseGroupAmount, convertALLToGroup]
   );
 
   const getSettlementGroupAmount = useCallback(
     (set: any): number => {
       if (set.currency === groupCurrency && typeof set.amount === 'number') return set.amount;
-      if (groupCurrency === 'ALL') return set.amountALL;
+      const cur = (set.currency || 'ALL').trim().toUpperCase();
+      const rateToALL = EXCHANGE_RATES[cur];
+      const canonicalALL =
+        cur !== 'ALL' && rateToALL && rateToALL !== 1 && set.amount === undefined
+          ? Math.round(set.amountALL * rateToALL * 100) / 100
+          : set.amountALL;
+
+      if (groupCurrency === 'ALL') return canonicalALL;
+
+      const expectedGroup = convertALLToGroup(canonicalALL);
       if (
         typeof set.amountInGroupCurrency === 'number' &&
-        Math.abs(set.amountInGroupCurrency - set.amountALL) > 0.01
+        Number.isFinite(set.amountInGroupCurrency) &&
+        set.amountInGroupCurrency > 0
       ) {
-        return set.amountInGroupCurrency;
+        const withinReasonableFXBand =
+          expectedGroup > 0 &&
+          set.amountInGroupCurrency >= expectedGroup * 0.5 &&
+          set.amountInGroupCurrency <= expectedGroup * 2.0;
+        if (withinReasonableFXBand) {
+          return Math.round(set.amountInGroupCurrency * 100) / 100;
+        }
       }
-      return convertALLFallback(set.amountALL);
+
+      return expectedGroup;
     },
-    [groupCurrency, convertALLFallback]
+    [groupCurrency, convertALLToGroup]
   );
 
   const fmtGroup = (amountGroup: number, showSign = false): string => {
@@ -133,10 +179,16 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     for (const exp of details.expenses) {
       const expTotal = getExpenseGroupAmount(exp);
       map.set(exp.paidByMemberId, (map.get(exp.paidByMemberId) ?? 0) + expTotal);
-      for (const split of exp.splits) {
-        const share = getSplitGroupAmount(split, exp);
+
+      let allocatedSplits = 0;
+      exp.splits.forEach((split: any, idx: number) => {
+        const share =
+          idx === exp.splits.length - 1
+            ? Math.round((expTotal - allocatedSplits) * 100) / 100
+            : getSplitGroupAmount(split, exp);
+        allocatedSplits = Math.round((allocatedSplits + share) * 100) / 100;
         map.set(split.memberId, (map.get(split.memberId) ?? 0) - share);
-      }
+      });
     }
 
     for (const set of details.settlements || []) {
@@ -146,7 +198,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     }
 
     for (const [id, val] of map.entries()) {
-      map.set(id, Math.round(val * 100) / 100);
+      const rounded = Math.round(val * 100) / 100;
+      map.set(id, Math.abs(rounded) < 0.01 ? 0 : rounded);
     }
 
     return map;
@@ -426,11 +479,28 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                           <p className="text-[10px] text-slate-400 font-medium">
                             Paid by {paidByMember}
                           </p>
-                          {exp.category && (
-                            <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
-                              {exp.category}
-                            </span>
-                          )}
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {exp.category && (
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
+                                {exp.category}
+                              </span>
+                            )}
+                            {exp.paidWith === 'Cash' && (
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 text-[10px] font-semibold">
+                                Cash
+                              </span>
+                            )}
+                            {exp.isBigExpense && (
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-semibold">
+                                Big Expense
+                              </span>
+                            )}
+                            {exp.syncToPulse === false && (
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-400 text-[10px] font-semibold">
+                                Group Only
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="text-right shrink-0">
                           <div className="font-mono font-bold text-slate-900 text-sm">
