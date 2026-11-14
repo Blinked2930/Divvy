@@ -1,12 +1,12 @@
-// src/components/GroupDetailView.tsx
+// Divvy/src/components/GroupDetailView.tsx
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { useQuery } from 'convex/react';
+import { useQuery, useMutation } from 'convex/react';
 import { useUser } from '@clerk/clerk-react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import {
   ArrowLeft, Plus, Receipt, UserPlus, Scale, ArrowRight, Share2, Check,
-  PieChart, Wallet, ChevronDown, ChevronUp, Settings2, Users,
+  PieChart, Wallet, ChevronDown, ChevronUp, Settings2, Users, Handshake, Trash2,
 } from 'lucide-react';
 import { AddExpenseModal } from './AddExpenseModal';
 import { AddMemberModal } from './AddMemberModal';
@@ -22,8 +22,13 @@ interface GroupDetailViewProps {
 
 type GroupTab = 'transactions' | 'balances';
 
+type GroupTransactionItem =
+  | { kind: 'expense'; data: any; timestamp: number }
+  | { kind: 'settlement'; data: any; timestamp: number };
+
 export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBack }) => {
   const details = useQuery((api as any).groups?.getGroupDetails, { groupId });
+  const deleteSettlementMutation = useMutation((api as any).groups?.deleteSettlement);
 
   const { user } = useUser();
   const clerkUserId = user?.id ?? null;
@@ -44,130 +49,65 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
   const groupCurrency: string = details?.group?.currency ?? 'ALL';
 
-  // Rate for converting 1 ALL -> groupCurrency
-  const [rateFromALL, setRateFromALL] = useState<number>(() => {
-    const fallbackToALL = EXCHANGE_RATES[groupCurrency];
-    return fallbackToALL ? 1 / fallbackToALL : 1;
+  const [rate, setRate] = useState<number>(() => {
+    const fallback = EXCHANGE_RATES[groupCurrency];
+    return fallback ? 1 / fallback : 1;
   });
 
   useEffect(() => {
     let cancelled = false;
     if (groupCurrency === 'ALL') {
-      setRateFromALL(1);
+      setRate(1);
       return;
-    }
-    const fallbackToALL = EXCHANGE_RATES[groupCurrency];
-    if (fallbackToALL) {
-      setRateFromALL(1 / fallbackToALL);
     }
     fetchExchangeRate('ALL', groupCurrency)
       .then((r) => {
-        if (!cancelled && typeof r === 'number' && Number.isFinite(r) && r > 0) {
-          setRateFromALL(r);
+        if (!cancelled && typeof r === 'number' && r > 0) {
+          setRate(r);
         }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [groupCurrency]);
 
-  const convertALLToGroup = useCallback(
-    (amountALL: number): number => {
-      if (groupCurrency === 'ALL') return Math.round(amountALL * 100) / 100;
-      return Math.round(amountALL * rateFromALL * 100) / 100;
-    },
-    [groupCurrency, rateFromALL]
+  const convertALLFallback = useCallback(
+    (amountALL: number): number => Math.round(amountALL * rate * 100) / 100,
+    [rate]
   );
-
-  // Normalize canonical ALL amount first (guarding against pre-fix 1:1 non-ALL rows)
-  const getCanonicalALL = useCallback((exp: any): number => {
-    const cur = (exp.currency || 'ALL').trim().toUpperCase();
-    if (cur === 'ALL') return exp.amountInALL;
-    const rateToALL = EXCHANGE_RATES[cur];
-    if (rateToALL && rateToALL !== 1 && Math.abs(exp.amountInALL - exp.amount) < 0.001) {
-      return Math.round(exp.amount * rateToALL * 100) / 100;
-    }
-    return exp.amountInALL;
-  }, []);
 
   const getExpenseGroupAmount = useCallback(
     (exp: any): number => {
+      if (typeof exp.amountInGroupCurrency === 'number') return exp.amountInGroupCurrency;
       if (exp.currency === groupCurrency) return exp.amount;
-      const canonicalALL = getCanonicalALL(exp);
-      if (groupCurrency === 'ALL') return canonicalALL;
-
-      const expectedGroup = convertALLToGroup(canonicalALL);
-      if (
-        typeof exp.amountInGroupCurrency === 'number' &&
-        Number.isFinite(exp.amountInGroupCurrency) &&
-        exp.amountInGroupCurrency > 0
-      ) {
-        // Reject stale 1:1 raw copies or ALL-era snapshots (e.g., 45,000 when expected is ~450)
-        const notRawCopy = Math.abs(exp.amountInGroupCurrency - exp.amount) > 0.01;
-        const notALLCopy = Math.abs(exp.amountInGroupCurrency - canonicalALL) > 0.01;
-        const withinReasonableFXBand =
-          expectedGroup > 0 &&
-          exp.amountInGroupCurrency >= expectedGroup * 0.5 &&
-          exp.amountInGroupCurrency <= expectedGroup * 2.0;
-
-        if ((notRawCopy && notALLCopy) || withinReasonableFXBand) {
-          return Math.round(exp.amountInGroupCurrency * 100) / 100;
-        }
-      }
-
-      return expectedGroup;
+      return convertALLFallback(exp.amountInALL);
     },
-    [groupCurrency, getCanonicalALL, convertALLToGroup]
+    [groupCurrency, convertALLFallback]
   );
 
   const getSplitGroupAmount = useCallback(
     (split: any, exp: any): number => {
-      const expGroupTotal = getExpenseGroupAmount(exp);
-      if (exp.amountInALL > 0) {
-        return Math.round(((split.amountALL / exp.amountInALL) * expGroupTotal) * 100) / 100;
+      if (typeof split.amountGroup === 'number') return split.amountGroup;
+      if (exp.currency === groupCurrency && exp.amountInALL > 0) {
+        return Math.round(((split.amountALL / exp.amountInALL) * exp.amount) * 100) / 100;
       }
-      if (groupCurrency === 'ALL') return split.amountALL;
-      return convertALLToGroup(split.amountALL);
+      return convertALLFallback(split.amountALL);
     },
-    [groupCurrency, getExpenseGroupAmount, convertALLToGroup]
+    [groupCurrency, convertALLFallback]
   );
 
   const getSettlementGroupAmount = useCallback(
     (set: any): number => {
+      if (typeof set.amountInGroupCurrency === 'number') return set.amountInGroupCurrency;
       if (set.currency === groupCurrency && typeof set.amount === 'number') return set.amount;
-      const cur = (set.currency || 'ALL').trim().toUpperCase();
-      const rateToALL = EXCHANGE_RATES[cur];
-      const canonicalALL =
-        cur !== 'ALL' && rateToALL && rateToALL !== 1 && set.amount === undefined
-          ? Math.round(set.amountALL * rateToALL * 100) / 100
-          : set.amountALL;
-
-      if (groupCurrency === 'ALL') return canonicalALL;
-
-      const expectedGroup = convertALLToGroup(canonicalALL);
-      if (
-        typeof set.amountInGroupCurrency === 'number' &&
-        Number.isFinite(set.amountInGroupCurrency) &&
-        set.amountInGroupCurrency > 0
-      ) {
-        const withinReasonableFXBand =
-          expectedGroup > 0 &&
-          set.amountInGroupCurrency >= expectedGroup * 0.5 &&
-          set.amountInGroupCurrency <= expectedGroup * 2.0;
-        if (withinReasonableFXBand) {
-          return Math.round(set.amountInGroupCurrency * 100) / 100;
-        }
-      }
-
-      return expectedGroup;
+      return convertALLFallback(set.amountALL);
     },
-    [groupCurrency, convertALLToGroup]
+    [groupCurrency, convertALLFallback]
   );
 
   const fmtGroup = (amountGroup: number, showSign = false): string => {
     return formatCurrency(Math.round(amountGroup * 100) / 100, groupCurrency, showSign);
   };
 
-  // Compute net member balances directly in groupCurrency without ALL round-trip drift
   const balancesInGroup = useMemo(() => {
     const map = new Map<string, number>();
     if (!details) return map;
@@ -179,16 +119,10 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     for (const exp of details.expenses) {
       const expTotal = getExpenseGroupAmount(exp);
       map.set(exp.paidByMemberId, (map.get(exp.paidByMemberId) ?? 0) + expTotal);
-
-      let allocatedSplits = 0;
-      exp.splits.forEach((split: any, idx: number) => {
-        const share =
-          idx === exp.splits.length - 1
-            ? Math.round((expTotal - allocatedSplits) * 100) / 100
-            : getSplitGroupAmount(split, exp);
-        allocatedSplits = Math.round((allocatedSplits + share) * 100) / 100;
+      for (const split of exp.splits) {
+        const share = getSplitGroupAmount(split, exp);
         map.set(split.memberId, (map.get(split.memberId) ?? 0) - share);
-      });
+      }
     }
 
     for (const set of details.settlements || []) {
@@ -198,8 +132,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     }
 
     for (const [id, val] of map.entries()) {
-      const rounded = Math.round(val * 100) / 100;
-      map.set(id, Math.abs(rounded) < 0.01 ? 0 : rounded);
+      map.set(id, Math.round(val * 100) / 100);
     }
 
     return map;
@@ -245,6 +178,21 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     return details.expenses.reduce((sum: number, exp: any) => sum + getExpenseGroupAmount(exp), 0);
   }, [details, getExpenseGroupAmount]);
 
+  const mergedTransactions = useMemo<GroupTransactionItem[]>(() => {
+    if (!details) return [];
+    const expItems: GroupTransactionItem[] = (details.expenses || []).map((exp: any) => ({
+      kind: 'expense',
+      data: exp,
+      timestamp: exp.timestamp ?? exp.createdAt ?? 0,
+    }));
+    const setItems: GroupTransactionItem[] = (details.settlements || []).map((set: any) => ({
+      kind: 'settlement',
+      data: set,
+      timestamp: set.timestamp ?? set.createdAt ?? 0,
+    }));
+    return [...expItems, ...setItems].sort((a, b) => b.timestamp - a.timestamp);
+  }, [details]);
+
   if (!details) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400 font-medium text-sm">
@@ -253,7 +201,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     );
   }
 
-  const { group, members, expenses } = details;
+  const { group, members } = details;
 
   const allowedCurrencies: string[] = (group as any).allowedCurrencies ?? ['ALL', 'EUR', 'USD'];
   const groupStatus: string = (group as any).status ?? 'active';
@@ -271,6 +219,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     setSettleTo(toId);
     setSettleAmount(amountGroup);
     setShowSettle(true);
+  };
+
+  const handleDeleteSettlement = async (e: React.MouseEvent, settlementId: Id<'groupSettlements'>) => {
+    e.stopPropagation();
+    await deleteSettlementMutation({ settlementId });
   };
 
   return (
@@ -360,7 +313,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
             }`}
           >
             <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Transactions ({expenses.length})</span>
+            <span>Transactions ({mergedTransactions.length})</span>
           </button>
           <button
             type="button"
@@ -452,15 +405,74 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
             <div className="space-y-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 px-1">
-                Expenses ({expenses.length})
+                Activity ({mergedTransactions.length})
               </h3>
-              {expenses.length === 0 ? (
+              {mergedTransactions.length === 0 ? (
                 <div className="p-8 rounded-3xl bg-white border border-slate-200 text-center space-y-2">
                   <Receipt className="w-6 h-6 text-slate-300 mx-auto" />
-                  <p className="text-xs text-slate-400">No expenses recorded for this group yet.</p>
+                  <p className="text-xs text-slate-400">No expenses or settlements recorded for this group yet.</p>
                 </div>
               ) : (
-                expenses.map((exp: any) => {
+                mergedTransactions.map((entry) => {
+                  if (entry.kind === 'settlement') {
+                    const set = entry.data;
+                    const fromName = members.find((m: any) => m._id === set.fromMemberId)?.name || 'Someone';
+                    const toName = members.find((m: any) => m._id === set.toMemberId)?.name || 'Someone';
+                    const nativeAmount = typeof set.amount === 'number' ? set.amount : set.amountALL;
+                    const isSameCurrency = set.currency === group.currency;
+                    const setGroupAmt = getSettlementGroupAmount(set);
+
+                    return (
+                      <div
+                        key={set._id}
+                        className="p-4 rounded-3xl bg-emerald-50/50 border border-emerald-200/80 shadow-sm space-y-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                              <Handshake className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="font-bold text-slate-900 text-sm truncate">
+                                  {fromName} paid {toName}
+                                </h4>
+                                <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0">
+                                  Settle
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-medium">
+                                Via {set.paidWith || 'Card'} · {new Date(set.timestamp).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="text-right">
+                              <div className="font-mono font-bold text-emerald-700 text-sm">
+                                {formatCurrency(nativeAmount, set.currency)}
+                              </div>
+                              {!isSameCurrency && (
+                                <div className="font-mono text-[10px] text-slate-400">
+                                  ≈ {fmtGroup(setGroupAmt)}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteSettlement(e, set._id)}
+                              className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Delete settlement"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  const exp = entry.data;
                   const isSameCurrency = exp.currency === group.currency;
                   const paidByMember = members.find((m: any) => m._id === exp.paidByMemberId)?.name || 'Someone';
                   const expGroupAmt = getExpenseGroupAmount(exp);
@@ -479,28 +491,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                           <p className="text-[10px] text-slate-400 font-medium">
                             Paid by {paidByMember}
                           </p>
-                          <div className="flex flex-wrap items-center gap-1 mt-1">
-                            {exp.category && (
-                              <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
-                                {exp.category}
-                              </span>
-                            )}
-                            {exp.paidWith === 'Cash' && (
-                              <span className="inline-block px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 text-[10px] font-semibold">
-                                Cash
-                              </span>
-                            )}
-                            {exp.isBigExpense && (
-                              <span className="inline-block px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[10px] font-semibold">
-                                Big Expense
-                              </span>
-                            )}
-                            {exp.syncToPulse === false && (
-                              <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-400 text-[10px] font-semibold">
-                                Group Only
-                              </span>
-                            )}
-                          </div>
+                          {exp.category && (
+                            <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
+                              {exp.category}
+                            </span>
+                          )}
                         </div>
                         <div className="text-right shrink-0">
                           <div className="font-mono font-bold text-slate-900 text-sm">
