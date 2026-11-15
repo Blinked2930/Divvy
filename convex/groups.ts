@@ -380,12 +380,6 @@ export const getGroupDetails = query({
   },
 });
 
-/**
- * Single reactive subscription returning full group details (members, expenses,
- * settlements) for all groups the current user belongs to. Used by Pulse's
- * useBudgetCycle hook so personal consumption, Card/Cash wallet deltas, Big
- * Expenses, and Travel Stash recalculate immediately when Divvy changes.
- */
 export const getAllMyGroupDetails = query({
   args: {
     userId: v.optional(v.string()),

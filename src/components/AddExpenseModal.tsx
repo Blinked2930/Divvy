@@ -1,6 +1,7 @@
 // src/components/AddExpenseModal.tsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { useMutation } from 'convex/react';
+import { useUser } from '@clerk/clerk-react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import {
@@ -16,6 +17,8 @@ import {
   Trash2,
   CreditCard,
   Banknote,
+  Calendar,
+  Utensils,
 } from 'lucide-react';
 import { fetchExchangeRate, formatCurrency } from '../utils/currencies';
 import { allocateByShares, reconstructSharesFromAmounts } from '../utils/splitMath';
@@ -24,6 +27,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 interface Member {
   _id: Id<'groupMembers'>;
   name: string;
+  userId?: string;
 }
 
 interface AddExpenseModalProps {
@@ -51,6 +55,14 @@ export const DIVVY_CATEGORIES = [
   'Other',
 ] as const;
 
+const FOOD_TYPES = ['Grocery', 'Ready Meal', 'Snack', 'Beverage'] as const;
+
+function getVendorOptionsForCategory(category: string): string[] {
+  if (category === 'Groceries') return ['Pazar', 'Supermarket', 'Bakery', 'Other'];
+  if (category === 'Eating Out') return ['Café', 'Restaurant', 'Bakery', 'Other'];
+  return [];
+}
+
 function normalizeDivvyCategory(raw?: string): string {
   if (!raw) return 'Other';
   const trimmed = raw.trim();
@@ -69,6 +81,28 @@ function normalizeDivvyCategory(raw?: string): string {
   return 'Other';
 }
 
+function toLocalDateInputValue(ms: number): string {
+  const d = new Date(ms);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function fromLocalDateInputValue(dateStr: string, referenceMs?: number): number {
+  if (!dateStr) return referenceMs ?? Date.now();
+  if (referenceMs && toLocalDateInputValue(referenceMs) === dateStr) {
+    return referenceMs;
+  }
+  const now = Date.now();
+  if (toLocalDateInputValue(now) === dateStr) {
+    return now;
+  }
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return referenceMs ?? now;
+  return new Date(y, m - 1, d, 12, 0, 0).getTime();
+}
+
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   isOpen,
   onClose,
@@ -78,6 +112,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   members,
   initialExpense,
 }) => {
+  const { user } = useUser();
   const addExpenseMutation = useMutation((api as any).groups?.addExpense || (api as any).groups?.addGroupExpense);
   const updateExpenseMutation = useMutation((api as any).groups?.updateExpense);
   const deleteExpenseMutation = useMutation((api as any).groups?.deleteExpense);
@@ -88,9 +123,20 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [fxRateToGroup, setFxRateToGroup] = useState<string>('1');
   const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
   const [category, setCategory] = useState(normalizeDivvyCategory(initialExpense?.category));
+  const [expenseDate, setExpenseDate] = useState<string>(() =>
+    toLocalDateInputValue(initialExpense?.timestamp ?? Date.now())
+  );
   const [paidByMemberId, setPaidByMemberId] = useState<string>(initialExpense?.paidByMemberId || members[0]?._id || '');
   const [paidWith, setPaidWith] = useState<'Card' | 'Cash'>(initialExpense?.paidWith || 'Card');
-  const [isBigExpense, setIsBigExpense] = useState<boolean>(Boolean(initialExpense?.isBigExpense));
+  const [syncToPulse, setSyncToPulse] = useState<boolean>(initialExpense?.syncToPulse !== false);
+
+  // Food & Grocery metadata (for Pulse Insights)
+  const [vendorType, setVendorType] = useState<string | undefined>(initialExpense?.vendorType);
+  const [foodType, setFoodType] = useState<string | undefined>(initialExpense?.foodType);
+  const [estimatedMeals, setEstimatedMeals] = useState<string>(
+    initialExpense?.estimatedMeals ? String(initialExpense.estimatedMeals) : ''
+  );
+
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>(members.map((m) => m._id));
   const [splitMode, setSplitMode] = useState<SplitMode>(initialExpense?.splitType || 'equal');
 
@@ -109,6 +155,20 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     if (selectedCurrency) set.add(selectedCurrency);
     return Array.from(set);
   }, [groupCurrency, allowedCurrencies, selectedCurrency]);
+
+  // Determine whether the selected payer is the current user (so Cash/Card only shows when relevant)
+  const isPaidBySelf = useMemo(() => {
+    const payer = members.find((m) => m._id === paidByMemberId);
+    if (!payer) return true;
+    if (!user) return true;
+    if (payer.userId && payer.userId === user.id) return true;
+    const explicitSelfExists = members.some((m) => m.userId && m.userId === user.id);
+    if (explicitSelfExists) return false;
+    const candidateNames = [user.fullName, user.firstName, user.username, 'You', 'Me']
+      .filter((n): n is string => Boolean(n && n.trim()))
+      .map((n) => n.trim().toLowerCase());
+    return candidateNames.includes(payer.name.trim().toLowerCase());
+  }, [members, paidByMemberId, user]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -138,9 +198,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setSelectedCurrency(expCurrency);
       if (inferredGroupRate) setFxRateToGroup(String(inferredGroupRate));
       setCategory(normalizeDivvyCategory(initialExpense.category));
+      setExpenseDate(toLocalDateInputValue(initialExpense.timestamp ?? Date.now()));
       setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
       setPaidWith(initialExpense.paidWith || 'Card');
-      setIsBigExpense(Boolean(initialExpense.isBigExpense));
+      setSyncToPulse(initialExpense.syncToPulse !== false);
+      setVendorType(initialExpense.vendorType);
+      setFoodType(initialExpense.foodType);
+      setEstimatedMeals(initialExpense.estimatedMeals ? String(initialExpense.estimatedMeals) : '');
       setSplitMode(initialExpense.splitType || 'equal');
 
       const existingSplits: Array<{ memberId: string; amountGroup?: number; amountALL: number }> =
@@ -166,14 +230,20 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         });
       }
     } else {
+      const defaultPayer =
+        (user?.id && members.find((m) => m.userId === user.id)?._id) || members[0]?._id || '';
       setTitle('');
       setAmount('');
       setSelectedCurrency(groupCurrency);
       setFxRateToGroup('1');
       setCategory('Other');
-      setPaidByMemberId(members[0]?._id || '');
+      setExpenseDate(toLocalDateInputValue(Date.now()));
+      setPaidByMemberId(defaultPayer);
       setPaidWith('Card');
-      setIsBigExpense(false);
+      setSyncToPulse(true);
+      setVendorType(undefined);
+      setFoodType(undefined);
+      setEstimatedMeals('');
       setSelectedMemberIds(members.map((m) => m._id));
       setSplitMode('equal');
     }
@@ -181,7 +251,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     setSharesMap(initialShares);
     setExactAmounts(initialExacts);
     setErrorMsg(null);
-  }, [isOpen, groupCurrency, initialExpense, members]);
+  }, [isOpen, groupCurrency, initialExpense, members, user?.id]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -232,6 +302,21 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   }, [splitMode, selectedMemberIds, sharesMap, amountInGroupCurrency]);
 
   if (!isOpen) return null;
+
+  const showFoodMetadata = category === 'Groceries' || category === 'Eating Out';
+  const vendorOptions = getVendorOptionsForCategory(category);
+
+  const handleSelectCategory = (nextCat: string) => {
+    setCategory(nextCat);
+    if (nextCat !== 'Groceries' && nextCat !== 'Eating Out') {
+      setVendorType(undefined);
+      setFoodType(undefined);
+      setEstimatedMeals('');
+    } else if (vendorType && !getVendorOptionsForCategory(nextCat).includes(vendorType)) {
+      setVendorType(undefined);
+    }
+    setShowCategoryPopover(false);
+  };
 
   const toggleMember = (id: string) => {
     if (selectedMemberIds.includes(id)) {
@@ -348,43 +433,46 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       amountALL: allocALL[s.memberId] ?? 0,
     }));
 
+    const parsedMeals = parseFloat(estimatedMeals);
+    const validMeals =
+      showFoodMetadata && Number.isFinite(parsedMeals) && parsedMeals > 0 ? parsedMeals : undefined;
+
+    const resolvedTimestamp = fromLocalDateInputValue(expenseDate, initialExpense?.timestamp);
+
     setIsSubmitting(true);
     try {
       const fxRateToALL = numAmount > 0 ? Math.round((amountInALL / numAmount) * 1000000) / 1000000 : 1;
 
+      const payload = {
+        title: title.trim(),
+        amount: numAmount,
+        currency: selectedCurrency,
+        amountInGroupCurrency,
+        amountInALL,
+        fxRateToGroup: numRateToGroup,
+        fxRateToALL,
+        category: category.trim() || 'Other',
+        vendorType: showFoodMetadata ? vendorType : undefined,
+        foodType: showFoodMetadata ? foodType : undefined,
+        estimatedMeals: validMeals,
+        paidByMemberId: paidByMemberId as Id<'groupMembers'>,
+        paidWith: isPaidBySelf ? paidWith : undefined,
+        isBigExpense: false,
+        syncToPulse,
+        timestamp: resolvedTimestamp,
+        splitType: splitMode,
+        splits,
+      };
+
       if (initialExpense?._id || initialExpense?.id) {
         await updateExpenseMutation({
           expenseId: (initialExpense._id || initialExpense.id) as Id<'groupExpenses'>,
-          title: title.trim(),
-          amount: numAmount,
-          currency: selectedCurrency,
-          amountInGroupCurrency,
-          amountInALL,
-          fxRateToGroup: numRateToGroup,
-          fxRateToALL,
-          category: category.trim() || 'Other',
-          paidByMemberId: paidByMemberId as Id<'groupMembers'>,
-          paidWith,
-          isBigExpense,
-          splitType: splitMode,
-          splits,
+          ...payload,
         });
       } else {
         await addExpenseMutation({
           groupId,
-          title: title.trim(),
-          amount: numAmount,
-          currency: selectedCurrency,
-          amountInGroupCurrency,
-          amountInALL,
-          fxRateToGroup: numRateToGroup,
-          fxRateToALL,
-          category: category.trim() || 'Other',
-          paidByMemberId: paidByMemberId as Id<'groupMembers'>,
-          paidWith,
-          isBigExpense,
-          splitType: splitMode,
-          splits,
+          ...payload,
         });
       }
 
@@ -543,29 +631,129 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Pulse Wallet & Budget Options */}
+            {/* Food & Grocery Details (for Pulse Insights) */}
+            {showFoodMetadata && (
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <Utensils className="w-3 h-3 text-emerald-600" />
+                    Food Insights (Optional)
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-slate-500">Meals</span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      placeholder="—"
+                      value={estimatedMeals}
+                      onChange={(e) => setEstimatedMeals(e.target.value)}
+                      className="w-14 px-2 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs text-center text-slate-800 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {vendorOptions.map((vOpt) => {
+                    const active = vendorType === vOpt;
+                    return (
+                      <button
+                        key={vOpt}
+                        type="button"
+                        onClick={() => setVendorType(active ? undefined : vOpt)}
+                        className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
+                          active
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        {vOpt}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-200/60">
+                  {FOOD_TYPES.map((fOpt) => {
+                    const active = foodType === fOpt;
+                    return (
+                      <button
+                        key={fOpt}
+                        type="button"
+                        onClick={() => setFoodType(active ? undefined : fOpt)}
+                        className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
+                          active
+                            ? 'bg-slate-800 text-white shadow-xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        {fOpt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Date & Pulse Sync Row */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  Payment Method
+                  Date
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={expenseDate}
+                    onChange={(e) => setExpenseDate(e.target.value)}
+                    className="w-full pl-8 pr-2.5 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                  />
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Pulse Budget
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setSyncToPulse((v) => !v)}
+                  className={`w-full py-2.5 px-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                    syncToPulse
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  {syncToPulse && <Check className="w-3.5 h-3.5" />}
+                  <span>{syncToPulse ? 'Counted' : 'Excluded'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Payment Method (only shown when you paid) */}
+            {isPaidBySelf && (
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Your Payment Method
                 </label>
                 <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-2xl">
                   <button
                     type="button"
                     onClick={() => setPaidWith('Card')}
-                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                       paidWith === 'Card'
                         ? 'bg-white text-slate-900 shadow-sm'
                         : 'text-slate-500 hover:text-slate-700'
                     }`}
                   >
                     <CreditCard className="w-3.5 h-3.5" />
-                    Card
+                    Card / Bank
                   </button>
                   <button
                     type="button"
                     onClick={() => setPaidWith('Cash')}
-                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                       paidWith === 'Cash'
                         ? 'bg-white text-slate-900 shadow-sm'
                         : 'text-slate-500 hover:text-slate-700'
@@ -576,24 +764,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   </button>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-                  Budget Bucket
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setIsBigExpense((v) => !v)}
-                  className={`w-full py-2.5 px-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    isBigExpense
-                      ? 'bg-purple-50 border-purple-300 text-purple-700'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
-                  }`}
-                >
-                  {isBigExpense ? 'Big Expense' : 'Daily Budget'}
-                </button>
-              </div>
-            </div>
+            )}
 
             <div className="space-y-2 pt-2 border-t border-slate-100">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -808,10 +979,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     <button
                       key={cat}
                       type="button"
-                      onClick={() => {
-                        setCategory(cat);
-                        setShowCategoryPopover(false);
-                      }}
+                      onClick={() => handleSelectCategory(cat)}
                       className={`w-full text-left px-4 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
                         category === cat
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
