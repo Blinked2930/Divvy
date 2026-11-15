@@ -34,6 +34,37 @@ function normalizeName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function resolveSelfMember<T extends { userId?: string; name: string }>(
+  members: T[],
+  userId: string,
+  identity?: { name?: string; givenName?: string; nickname?: string; email?: string } | null
+): T | undefined {
+  const byId = members.find((m) => m.userId === userId);
+  if (byId) return byId;
+
+  if (identity && userId !== "anonymous") {
+    const candidates = [
+      identity.name,
+      identity.givenName,
+      identity.nickname,
+      identity.email?.split("@")[0],
+    ]
+      .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      .map(normalizeName);
+
+    if (candidates.length > 0) {
+      const byName = members.find(
+        (m) =>
+          (!m.userId || m.userId === "anonymous") &&
+          candidates.includes(normalizeName(m.name))
+      );
+      if (byName) return byName;
+    }
+  }
+
+  return members.find((m) => !m.userId || m.userId === "anonymous");
+}
+
 function allocateByShares(
   totalAmount: number,
   weights: Record<string, number>
@@ -206,9 +237,7 @@ export const getMyGroups = query({
         .filter((q) => q.eq(q.field("groupId"), memberRow.groupId))
         .collect();
 
-      const selfMember =
-        members.find((m) => m.userId === userId) ??
-        members.find((m) => !m.userId || m.userId === "anonymous");
+      const selfMember = resolveSelfMember(members, userId, identity);
       if (!selfMember) continue;
 
       seenGroupIds.add(gidStr);
@@ -539,6 +568,8 @@ export const getActivityFeed = query({
       amountInALL: number;
       myShareALL?: number;
       youPaid?: boolean;
+      youReceived?: boolean;
+      involvesYou?: boolean;
       currency: string;
       category?: string;
       paidByMemberId?: string;
@@ -559,9 +590,7 @@ export const getActivityFeed = query({
         .filter((q) => q.eq(q.field("groupId"), groupId))
         .collect();
 
-      const selfMember =
-        members.find((m) => m.userId === userId) ??
-        members.find((m) => !m.userId || m.userId === "anonymous");
+      const selfMember = resolveSelfMember(members, userId, identity);
       const memberMap = new Map(members.map((m) => [m._id, m.name]));
 
       const expenses = await ctx.db
@@ -607,6 +636,9 @@ export const getActivityFeed = query({
           amountInALL: normalizedAmountInALL,
           myShareALL,
           youPaid: selfMember ? exp.paidByMemberId === selfMember._id : undefined,
+          involvesYou: selfMember
+            ? exp.paidByMemberId === selfMember._id || (myShareALL ?? 0) > 0
+            : undefined,
           currency: exp.currency,
           category: exp.category,
           paidByMemberId: exp.paidByMemberId,
@@ -639,6 +671,9 @@ export const getActivityFeed = query({
             ? Math.round(set.amountALL * fallbackRate * 100) / 100
             : set.amountALL;
 
+        const youPaid = selfMember ? set.fromMemberId === selfMember._id : undefined;
+        const youReceived = selfMember ? set.toMemberId === selfMember._id : undefined;
+
         activities.push({
           id: set._id,
           groupId: group._id,
@@ -649,9 +684,12 @@ export const getActivityFeed = query({
           amount: set.amount ?? set.amountALL,
           amountInGroupCurrency: set.amountInGroupCurrency,
           amountInALL: normalizedAmountALL,
-          youPaid: selfMember ? set.fromMemberId === selfMember._id : undefined,
+          myShareALL: 0,
+          youPaid,
+          youReceived,
+          involvesYou: selfMember ? Boolean(youPaid || youReceived) : undefined,
           currency: set.currency,
-          paidWith: set.paidWith ?? "Cash",
+          paidWith: set.paidWith ?? "Card",
           timestamp: set.timestamp,
           actorName: fromName,
         });
@@ -1416,3 +1454,78 @@ export const settleGroupDebt = mutation({
 });
 
 export const addSettlement = settleGroupDebt;
+
+export const updateSettlement = mutation({
+  args: {
+    settlementId: v.id("groupSettlements"),
+    fromMemberId: v.id("groupMembers"),
+    toMemberId: v.id("groupMembers"),
+    amount: v.optional(v.number()),
+    amountInGroupCurrency: v.optional(v.number()),
+    amountALL: v.number(),
+    fxRateToGroup: v.optional(v.number()),
+    fxRateToALL: v.optional(v.number()),
+    currency: v.string(),
+    paidWith: v.optional(v.union(v.literal("Cash"), v.literal("Card"))),
+    timestamp: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.settlementId);
+    if (!existing || existing.deleted) {
+      throw new Error("Settlement not found.");
+    }
+
+    const group = await ctx.db.get(existing.groupId);
+    if (!group || group.deleted) {
+      throw new Error("Group not found.");
+    }
+
+    const currency = assertValidCurrencyCode(args.currency);
+    if (args.amountALL <= 0) {
+      throw new Error("Settlement amount in ALL must be greater than 0.");
+    }
+
+    const nativeAmount = args.amount ?? args.amountInGroupCurrency ?? args.amountALL;
+    const amountInGroupCurrency = resolveGroupAmount(
+      nativeAmount,
+      currency,
+      args.amountALL,
+      group.currency,
+      args.amountInGroupCurrency
+    );
+    const fxRateToGroup =
+      args.fxRateToGroup ??
+      (currency === group.currency
+        ? 1
+        : Math.round((amountInGroupCurrency / nativeAmount) * 1000000) / 1000000);
+    const fxRateToALL =
+      args.fxRateToALL ??
+      (currency === "ALL" ? 1 : Math.round((args.amountALL / nativeAmount) * 1000000) / 1000000);
+
+    await ctx.db.patch(args.settlementId, {
+      fromMemberId: args.fromMemberId,
+      toMemberId: args.toMemberId,
+      amount: nativeAmount,
+      amountInGroupCurrency,
+      amountALL: args.amountALL,
+      fxRateToGroup,
+      fxRateToALL,
+      currency,
+      paidWith: args.paidWith ?? existing.paidWith ?? "Card",
+      timestamp: args.timestamp ?? existing.timestamp,
+    });
+  },
+});
+
+export const deleteSettlement = mutation({
+  args: {
+    settlementId: v.id("groupSettlements"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.settlementId);
+    if (!existing) return;
+    await ctx.db.patch(args.settlementId, {
+      deleted: true,
+    });
+  },
+});

@@ -21,6 +21,8 @@ interface SettleDebtModalProps {
   initialFromMemberId?: string;
   initialToMemberId?: string;
   initialAmount?: number;
+  initialAmountALL?: number;
+  initialSettlement?: any | null;
 }
 
 export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
@@ -28,19 +30,23 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
   onClose,
   groupId,
   groupCurrency,
-  allowedCurrencies = ['EUR', 'USD', 'ALL'],
+  allowedCurrencies = ['ALL', 'EUR', 'USD'],
   members,
   initialFromMemberId,
   initialToMemberId,
   initialAmount,
+  initialAmountALL,
+  initialSettlement,
 }) => {
   const settleDebtMutation = useMutation((api as any).groups?.settleGroupDebt);
+  const updateSettlementMutation = useMutation((api as any).groups?.updateSettlement);
+
+  const isEditing = Boolean(initialSettlement?._id);
 
   const [fromMemberId, setFromMemberId] = useState<string>(members[0]?._id ?? '');
   const [toMemberId, setToMemberId] = useState<string>(members[1]?._id ?? members[0]?._id ?? '');
   const [settlementCurrency, setSettlementCurrency] = useState<string>(groupCurrency);
-  const [fxRateToGroup, setFxRateToGroup] = useState<string>('1');
-  const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
+  const [fxRateToALL, setFxRateToALL] = useState<string>('1');
   const [amount, setAmount] = useState<string>('');
   const [paidWith, setPaidWith] = useState<'Cash' | 'Card'>('Cash');
   const [showFromDropdown, setShowFromDropdown] = useState(false);
@@ -50,67 +56,88 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const currencyChoices = useMemo(() => {
-    return Array.from(new Set([groupCurrency, ...allowedCurrencies]));
+    return Array.from(new Set(['ALL', groupCurrency, ...allowedCurrencies]));
   }, [groupCurrency, allowedCurrencies]);
 
   useEffect(() => {
     if (!isOpen) return;
+    setError(null);
+    setShowFromDropdown(false);
+    setShowToDropdown(false);
+    setShowCurrencyDropdown(false);
+
+    if (initialSettlement) {
+      const cur = initialSettlement.currency || groupCurrency;
+      const nativeAmt =
+        typeof initialSettlement.amount === 'number'
+          ? initialSettlement.amount
+          : initialSettlement.amountALL;
+      const rate =
+        cur === 'ALL'
+          ? 1
+          : initialSettlement.fxRateToALL ??
+            (nativeAmt > 0
+              ? Math.round((initialSettlement.amountALL / nativeAmt) * 10000) / 10000
+              : 1);
+
+      setFromMemberId(initialSettlement.fromMemberId);
+      setToMemberId(initialSettlement.toMemberId);
+      setSettlementCurrency(cur);
+      setAmount(String(nativeAmt));
+      setFxRateToALL(String(rate));
+      setPaidWith(initialSettlement.paidWith || 'Card');
+      return;
+    }
+
     if (initialFromMemberId) setFromMemberId(initialFromMemberId);
     if (initialToMemberId) setToMemberId(initialToMemberId);
     setSettlementCurrency(groupCurrency);
-    if (initialAmount && initialAmount > 0) {
-      setAmount(String(Math.round(initialAmount * 100) / 100));
-    }
-    setError(null);
-  }, [isOpen, initialFromMemberId, initialToMemberId, initialAmount, groupCurrency]);
+  }, [isOpen, initialSettlement, initialFromMemberId, initialToMemberId, groupCurrency]);
 
   useEffect(() => {
     if (!isOpen) return;
-    if (groupCurrency === 'ALL') {
-      setGroupToALLRate(1);
+
+    if (
+      initialSettlement &&
+      settlementCurrency === (initialSettlement.currency || groupCurrency)
+    ) {
       return;
     }
-    fetchExchangeRate(groupCurrency, 'ALL').then((r) => setGroupToALLRate(r));
-  }, [isOpen, groupCurrency]);
 
-  useEffect(() => {
-    if (!isOpen) return;
     let active = true;
 
-    const loadRate = async () => {
-      const rate =
-        settlementCurrency === groupCurrency
-          ? 1
-          : await fetchExchangeRate(settlementCurrency, groupCurrency);
+    const loadRateAndPrefill = async () => {
+      const rate = settlementCurrency === 'ALL'
+        ? 1
+        : await fetchExchangeRate(settlementCurrency, 'ALL');
       if (!active) return;
 
       const cleanRate = Math.round(rate * 10000) / 10000;
-      setFxRateToGroup(String(cleanRate));
+      setFxRateToALL(String(cleanRate));
 
-      if (initialAmount && initialAmount > 0) {
-        const converted =
-          settlementCurrency === groupCurrency
-            ? Math.round(initialAmount * 100) / 100
-            : Math.round((initialAmount / cleanRate) * 100) / 100;
-        setAmount(String(converted));
+      if (!initialSettlement) {
+        if (initialAmountALL && initialAmountALL > 0) {
+          const prefilled = settlementCurrency === 'ALL'
+            ? Math.round(initialAmountALL)
+            : Math.round((initialAmountALL / cleanRate) * 100) / 100;
+          setAmount(String(prefilled));
+        } else if (initialAmount && initialAmount > 0 && settlementCurrency === groupCurrency) {
+          setAmount(String(initialAmount));
+        }
       }
     };
 
-    loadRate();
+    loadRateAndPrefill();
     return () => {
       active = false;
     };
-  }, [isOpen, settlementCurrency, groupCurrency, initialAmount]);
+  }, [isOpen, settlementCurrency, groupCurrency, initialAmount, initialAmountALL, initialSettlement]);
 
   if (!isOpen) return null;
 
   const numAmount = parseFloat(amount) || 0;
-  const numRateToGroup = settlementCurrency === groupCurrency ? 1 : (parseFloat(fxRateToGroup) || 0);
-  const amountInGroupCurrency = Math.round(numAmount * numRateToGroup * 100) / 100;
-  const amountALL =
-    groupCurrency === 'ALL'
-      ? amountInGroupCurrency
-      : Math.round(amountInGroupCurrency * groupToALLRate * 100) / 100;
+  const numRateToALL = settlementCurrency === 'ALL' ? 1 : (parseFloat(fxRateToALL) || 0);
+  const amountALL = Math.round(numAmount * numRateToALL * 100) / 100;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,32 +148,41 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
       return;
     }
 
-    if (numAmount <= 0 || amountInGroupCurrency <= 0) {
-      setError('Please enter a valid amount greater than 0.');
+    if (numAmount <= 0 || amountALL <= 0) {
+      setError('Please enter a valid amount and exchange rate greater than 0.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const fxRateToALL = numAmount > 0 ? Math.round((amountALL / numAmount) * 1000000) / 1000000 : 1;
-
-      await settleDebtMutation({
-        groupId,
-        fromMemberId: fromMemberId as Id<'groupMembers'>,
-        toMemberId: toMemberId as Id<'groupMembers'>,
-        amount: numAmount,
-        amountInGroupCurrency,
-        amountALL,
-        fxRateToGroup: numRateToGroup,
-        fxRateToALL,
-        currency: settlementCurrency,
-        paidWith,
-      });
+      if (isEditing && initialSettlement?._id) {
+        await updateSettlementMutation({
+          settlementId: initialSettlement._id as Id<'groupSettlements'>,
+          fromMemberId: fromMemberId as Id<'groupMembers'>,
+          toMemberId: toMemberId as Id<'groupMembers'>,
+          amount: numAmount,
+          amountALL,
+          fxRateToALL: numRateToALL,
+          currency: settlementCurrency,
+          paidWith,
+        });
+      } else {
+        await settleDebtMutation({
+          groupId,
+          fromMemberId: fromMemberId as Id<'groupMembers'>,
+          toMemberId: toMemberId as Id<'groupMembers'>,
+          amount: numAmount,
+          amountALL,
+          fxRateToALL: numRateToALL,
+          currency: settlementCurrency,
+          paidWith,
+        });
+      }
 
       onClose();
     } catch (err) {
-      console.error('Failed to record settlement:', err);
-      setError('Could not record settlement. Please try again.');
+      console.error('Failed to save settlement:', err);
+      setError('Could not save settlement. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -169,7 +205,9 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
             <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
               <Scale className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-bold text-slate-900">Settle Group Debt</h3>
+            <h3 className="text-lg font-bold text-slate-900">
+              {isEditing ? 'Edit Settlement' : 'Settle Group Debt'}
+            </h3>
           </div>
           <button
             type="button"
@@ -294,25 +332,25 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
             </div>
           </div>
 
-          {settlementCurrency !== groupCurrency && (
+          {settlementCurrency !== 'ALL' && (
             <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 space-y-2 text-xs">
               <div className="flex items-center justify-between font-bold text-amber-900">
                 <span className="flex items-center gap-1">
                   <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
-                  Group Currency Settlement ({groupCurrency})
+                  Base Lek Settlement (ALL)
                 </span>
-                <span className="font-mono">{formatCurrency(amountInGroupCurrency, groupCurrency)}</span>
+                <span className="font-mono">{formatCurrency(amountALL, 'ALL')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-amber-700 text-[10px]">1 {settlementCurrency} =</span>
                 <input
                   type="number"
                   step="any"
-                  value={fxRateToGroup}
-                  onChange={(e) => setFxRateToGroup(e.target.value)}
+                  value={fxRateToALL}
+                  onChange={(e) => setFxRateToALL(e.target.value)}
                   className="w-24 px-2 py-1 rounded-xl bg-white border border-amber-300 font-mono text-xs text-amber-900 focus:outline-none focus:border-amber-500"
                 />
-                <span className="text-amber-700 text-[10px]">{groupCurrency}</span>
+                <span className="text-amber-700 text-[10px]">ALL</span>
               </div>
             </div>
           )}
@@ -361,7 +399,13 @@ export const SettleDebtModal: React.FC<SettleDebtModalProps> = ({
             ) : (
               <Check className="w-4 h-4" />
             )}
-            <span>{isSubmitting ? 'Recording...' : 'Record Payment'}</span>
+            <span>
+              {isSubmitting
+                ? 'Saving...'
+                : isEditing
+                  ? 'Save Changes'
+                  : 'Record Payment'}
+            </span>
           </button>
         </form>
       </div>

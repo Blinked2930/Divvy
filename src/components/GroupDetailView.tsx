@@ -42,6 +42,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   const [copied, setCopied] = useState(false);
 
   const [editingExpense, setEditingExpense] = useState<any | null>(null);
+  const [editingSettlement, setEditingSettlement] = useState<any | null>(null);
 
   const [settleFrom, setSettleFrom] = useState<string | undefined>();
   const [settleTo, setSettleTo] = useState<string | undefined>();
@@ -215,6 +216,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   };
 
   const handleQuickSettle = (fromId: string, toId: string, amountGroup: number) => {
+    setEditingSettlement(null);
     setSettleFrom(fromId);
     setSettleTo(toId);
     setSettleAmount(amountGroup);
@@ -284,6 +286,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
           <button
             type="button"
             onClick={() => {
+              setEditingSettlement(null);
               setSettleFrom(undefined);
               setSettleTo(undefined);
               setSettleAmount(undefined);
@@ -425,7 +428,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                     return (
                       <div
                         key={set._id}
-                        className="p-4 rounded-3xl bg-emerald-50/50 border border-emerald-200/80 shadow-sm space-y-2"
+                        onClick={() => {
+                          setEditingSettlement(set);
+                          setShowSettle(true);
+                        }}
+                        className="p-4 rounded-3xl bg-emerald-50/50 border border-emerald-200/80 hover:border-emerald-300 shadow-sm space-y-2 cursor-pointer transition-all"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-3 min-w-0">
@@ -607,7 +614,10 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
       <AddMemberModal isOpen={showAddMember} onClose={() => setShowAddMember(false)} groupId={groupId} />
       <SettleDebtModal
         isOpen={showSettle}
-        onClose={() => setShowSettle(false)}
+        onClose={() => {
+          setShowSettle(false);
+          setEditingSettlement(null);
+        }}
         groupId={groupId}
         groupCurrency={group.currency}
         allowedCurrencies={allowedCurrencies}
@@ -615,6 +625,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         initialFromMemberId={settleFrom}
         initialToMemberId={settleTo}
         initialAmount={settleAmount}
+        initialSettlement={editingSettlement}
       />
       <GroupSettingsModal
         isOpen={showSettings}
