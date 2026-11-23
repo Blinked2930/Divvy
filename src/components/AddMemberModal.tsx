@@ -18,7 +18,8 @@ import {
 export interface GroupRosterMember {
   _id: Id<'groupMembers'>;
   name: string;
-  userId?: string;
+  userId?: string | null;
+  claimedByUserId?: string | null;
 }
 
 interface AddMemberModalProps {
@@ -30,6 +31,18 @@ interface AddMemberModalProps {
 }
 
 type RosterFilter = 'all' | 'claimed' | 'unclaimed';
+
+function getLinkedUserId(member: GroupRosterMember): string | null {
+  const raw = member.userId ?? member.claimedByUserId;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower === 'unclaimed' || lower === 'none' || lower === 'null' || lower === 'undefined') {
+    return null;
+  }
+  return trimmed;
+}
 
 export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   isOpen,
@@ -56,24 +69,25 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const claimedCount = useMemo(
-    () => members.filter((m) => Boolean(m.userId)).length,
+    () => members.filter((m) => Boolean(getLinkedUserId(m))).length,
     [members]
   );
 
   const unclaimedCount = useMemo(
-    () => members.filter((m) => !m.userId).length,
+    () => members.filter((m) => !getLinkedUserId(m)).length,
     [members]
   );
 
   const currentUserAlreadyClaimed = useMemo(
-    () => Boolean(clerkUserId && members.some((m) => m.userId === clerkUserId)),
+    () => Boolean(clerkUserId && members.some((m) => getLinkedUserId(m) === clerkUserId)),
     [clerkUserId, members]
   );
 
   const visibleMembers = useMemo(() => {
     return members.filter((m) => {
-      if (filter === 'claimed') return Boolean(m.userId);
-      if (filter === 'unclaimed') return !m.userId;
+      const linked = getLinkedUserId(m);
+      if (filter === 'claimed') return Boolean(linked);
+      if (filter === 'unclaimed') return !linked;
       return true;
     });
   }, [members, filter]);
@@ -154,15 +168,16 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+            title="Close (never mind)"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Add New Person Form */}
-        <form onSubmit={handleSubmit} className="space-y-2.5">
+        <form onSubmit={handleSubmit} className="space-y-2">
           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Add Unclaimed Person
+            Add Person
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -181,8 +196,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
               <span>{isSubmitting ? 'Adding…' : 'Add'}</span>
             </button>
           </div>
-          <p className="text-[10px] text-slate-400">
-            Added people start as unclaimed slots so expenses can be split with them right away, and they can claim their slot once they join.
+          <p className="text-[10px] text-slate-400 truncate">
+            Added people start unclaimed so you can split expenses right away.
           </p>
         </form>
 
@@ -255,9 +270,10 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
               </p>
             ) : (
               visibleMembers.map((m) => {
-                const isClaimed = Boolean(m.userId);
-                const isMe = Boolean(clerkUserId && m.userId === clerkUserId);
-                const isOwner = Boolean(groupOwnerId && m.userId === groupOwnerId);
+                const linkedUserId = getLinkedUserId(m);
+                const isClaimed = Boolean(linkedUserId);
+                const isMe = Boolean(clerkUserId && linkedUserId === clerkUserId);
+                const isOwner = Boolean(groupOwnerId && linkedUserId === groupOwnerId);
 
                 return (
                   <div
