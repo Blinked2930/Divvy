@@ -1,35 +1,112 @@
-import React, { useState } from 'react';
+// src/components/AddMemberModal.tsx
+import React, { useState, useMemo } from 'react';
 import { useMutation } from 'convex/react';
+import { useUser } from '@clerk/clerk-react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
-import { X, UserPlus, Check, Loader2 } from 'lucide-react';
+import {
+  X,
+  UserPlus,
+  Check,
+  UserCheck,
+  UserX,
+  Crown,
+  Copy,
+  Users,
+} from 'lucide-react';
+
+export interface GroupRosterMember {
+  _id: Id<'groupMembers'>;
+  name: string;
+  userId?: string;
+}
 
 interface AddMemberModalProps {
   isOpen: boolean;
   onClose: () => void;
   groupId: Id<'groups'>;
+  members?: GroupRosterMember[];
+  groupOwnerId?: string;
 }
+
+type RosterFilter = 'all' | 'claimed' | 'unclaimed';
 
 export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   isOpen,
   onClose,
   groupId,
+  members = [],
+  groupOwnerId,
 }) => {
-  const addMemberMutation = useMutation((api as any).groups?.addMember);
+  const { user } = useUser();
+  const clerkUserId = user?.id ?? null;
+
+  const addMemberMutation = useMutation(
+    (api as any).groups?.addMember || (api as any).groups?.addGroupMember
+  );
+  const claimMemberMutation = useMutation(
+    (api as any).groups?.claimMember || (api as any).groups?.claimGroupMember
+  );
 
   const [name, setName] = useState('');
+  const [filter, setFilter] = useState<RosterFilter>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const claimedCount = useMemo(
+    () => members.filter((m) => Boolean(m.userId)).length,
+    [members]
+  );
+
+  const unclaimedCount = useMemo(
+    () => members.filter((m) => !m.userId).length,
+    [members]
+  );
+
+  const currentUserAlreadyClaimed = useMemo(
+    () => Boolean(clerkUserId && members.some((m) => m.userId === clerkUserId)),
+    [clerkUserId, members]
+  );
+
+  const visibleMembers = useMemo(() => {
+    return members.filter((m) => {
+      if (filter === 'claimed') return Boolean(m.userId);
+      if (filter === 'unclaimed') return !m.userId;
+      return true;
+    });
+  }, [members, filter]);
 
   if (!isOpen) return null;
 
+  const handleCopyGroupId = () => {
+    navigator.clipboard.writeText(String(groupId));
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
+
+  const handleClaim = async (memberId: Id<'groupMembers'>) => {
+    setClaimingId(memberId);
+    setErrorMsg(null);
+    try {
+      await claimMemberMutation({ groupId, memberId });
+    } catch (err: any) {
+      console.error('Failed to claim member:', err);
+      const serverMsg = err?.message?.replace(/^Uncaught Error:\s*/, '');
+      setErrorMsg(serverMsg || 'Could not claim this member slot.');
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setErrorMsg(null);
 
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError('Please enter a display name.');
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setErrorMsg('Please enter a name.');
       return;
     }
 
@@ -37,14 +114,14 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
     try {
       await addMemberMutation({
         groupId,
-        name: trimmedName,
+        name: trimmed,
       });
-
       setName('');
-      onClose();
+      setErrorMsg(null);
     } catch (err: any) {
       console.error('Failed to add member:', err);
-      setError('Could not add member. Please try again.');
+      const serverMsg = err?.message?.replace(/^Uncaught Error:\s*/, '');
+      setErrorMsg(serverMsg || 'Failed to add member. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -53,18 +130,25 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 space-y-4 font-sans max-h-[85vh] overflow-y-auto"
+        className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 space-y-5 font-sans max-h-[85vh] overflow-y-auto"
       >
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
               <UserPlus className="w-5 h-5" />
             </div>
-            <h3 className="text-lg font-bold text-slate-900">Add Person to Group</h3>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 leading-tight">
+                People &amp; Claim Status
+              </h3>
+              <p className="text-[11px] text-slate-400 font-medium">
+                {members.length} total · {claimedCount} claimed · {unclaimedCount} unclaimed
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -75,36 +159,176 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
-              Person's Name *
-            </label>
+        {/* Add New Person Form */}
+        <form onSubmit={handleSubmit} className="space-y-2.5">
+          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+            Add Unclaimed Person
+          </label>
+          <div className="flex items-center gap-2">
             <input
               type="text"
-              required
-              placeholder="e.g. Sarah"
+              placeholder="e.g. Elena, Marco, Guest"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-sm font-medium focus:outline-none focus:border-emerald-500"
+              className="flex-1 min-w-0 px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500 text-sm font-medium"
             />
+            <button
+              type="submit"
+              disabled={isSubmitting || !name.trim()}
+              className="px-4 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Check className="w-4 h-4" />
+              <span>{isSubmitting ? 'Adding…' : 'Add'}</span>
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-400">
+            Added people start as unclaimed slots so expenses can be split with them right away, and they can claim their slot once they join.
+          </p>
+        </form>
+
+        {/* Current Roster & Claim Status */}
+        <div className="space-y-3 pt-3 border-t border-slate-100">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-slate-400" />
+              Current Roster ({members.length})
+            </span>
+            <button
+              type="button"
+              onClick={handleCopyGroupId}
+              className="px-2.5 py-1 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              {copiedId ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  <span className="text-emerald-700">Group ID Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy Group ID</span>
+                </>
+              )}
+            </button>
           </div>
 
-          {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+          <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 text-[11px] font-bold">
+            <button
+              type="button"
+              onClick={() => setFilter('all')}
+              className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                filter === 'all'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              All ({members.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter('claimed')}
+              className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                filter === 'claimed'
+                  ? 'bg-white text-emerald-700 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Claimed ({claimedCount})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter('unclaimed')}
+              className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                filter === 'unclaimed'
+                  ? 'bg-white text-amber-700 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              Unclaimed ({unclaimedCount})
+            </button>
+          </div>
 
-          <button
-            type="submit"
-            disabled={isSubmitting || !name.trim()}
-            className="w-full py-3.5 px-4 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
-          >
-            {isSubmitting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
+            {visibleMembers.length === 0 ? (
+              <p className="text-xs text-slate-400 italic text-center py-4">
+                No members in this filter.
+              </p>
             ) : (
-              <Check className="w-4 h-4" />
+              visibleMembers.map((m) => {
+                const isClaimed = Boolean(m.userId);
+                const isMe = Boolean(clerkUserId && m.userId === clerkUserId);
+                const isOwner = Boolean(groupOwnerId && m.userId === groupOwnerId);
+
+                return (
+                  <div
+                    key={m._id}
+                    className="p-3 rounded-2xl bg-slate-50/90 border border-slate-100 flex items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs shrink-0 ${
+                          isClaimed
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100/80 text-amber-800'
+                        }`}
+                      >
+                        {m.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900 text-xs truncate">
+                            {m.name}
+                          </span>
+                          {isMe && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-bold uppercase">
+                              You
+                            </span>
+                          )}
+                          {isOwner && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-700 text-[9px] font-bold flex items-center gap-0.5">
+                              <Crown className="w-2.5 h-2.5" />
+                              Owner
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5">
+                          {isClaimed ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
+                              <UserCheck className="w-3 h-3" />
+                              Claimed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700">
+                              <UserX className="w-3 h-3" />
+                              Unclaimed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {!isClaimed && clerkUserId && !currentUserAlreadyClaimed && (
+                      <button
+                        type="button"
+                        disabled={claimingId === m._id}
+                        onClick={() => handleClaim(m._id)}
+                        className="px-2.5 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50 shrink-0"
+                      >
+                        {claimingId === m._id ? 'Claiming…' : 'Claim as Me'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
-            <span>{isSubmitting ? 'Adding...' : 'Add Person'}</span>
-          </button>
-        </form>
+          </div>
+        </div>
+
+        {errorMsg && (
+          <p className="text-rose-600 text-xs font-semibold bg-rose-50 border border-rose-200 rounded-2xl px-3 py-2">
+            {errorMsg}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -21,6 +21,9 @@ import {
   Users,
   Handshake,
   Trash2,
+  UserCheck,
+  UserX,
+  Crown,
 } from 'lucide-react';
 import { AddExpenseModal } from './AddExpenseModal';
 import { AddMemberModal } from './AddMemberModal';
@@ -47,6 +50,9 @@ type GroupTransactionItem =
 export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBack }) => {
   const details = useQuery((api as any).groups?.getGroupDetails, { groupId });
   const deleteSettlementMutation = useMutation((api as any).groups?.deleteSettlement);
+  const claimMemberMutation = useMutation(
+    (api as any).groups?.claimMember || (api as any).groups?.claimGroupMember
+  );
 
   const { user } = useUser();
   const clerkUserId = user?.id ?? null;
@@ -58,6 +64,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   const [showSettings, setShowSettings] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [showDebtTransfersBreakdown, setShowDebtTransfersBreakdown] = useState(false);
+  const [memberFilter, setMemberFilter] = useState<'all' | 'claimed' | 'unclaimed'>('all');
+  const [claimingMemberId, setClaimingMemberId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const [editingExpense, setEditingExpense] = useState<any | null>(null);
@@ -256,6 +264,17 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   const isArchived = groupStatus === 'archived';
   const isOwner = clerkUserId != null && (group as any).createdBy === clerkUserId;
 
+  const claimedMembers = members.filter((m: any) => Boolean(m.userId));
+  const unclaimedMembers = members.filter((m: any) => !m.userId);
+  const currentUserAlreadyClaimedInGroup =
+    clerkUserId != null && members.some((m: any) => m.userId === clerkUserId);
+
+  const filteredMembers = members.filter((m: any) => {
+    if (memberFilter === 'claimed') return Boolean(m.userId);
+    if (memberFilter === 'unclaimed') return !m.userId;
+    return true;
+  });
+
   const handleCopyGroupId = () => {
     navigator.clipboard.writeText(group._id);
     setCopied(true);
@@ -275,6 +294,17 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     await deleteSettlementMutation({ settlementId });
   };
 
+  const handleClaimMember = async (memberId: Id<'groupMembers'>) => {
+    setClaimingMemberId(memberId);
+    try {
+      await claimMemberMutation({ groupId, memberId });
+    } catch (err) {
+      console.error('Failed to claim member:', err);
+    } finally {
+      setClaimingMemberId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-32 font-sans">
       <header
@@ -292,7 +322,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
           <div className="text-center min-w-0 flex-1">
             <h2 className="font-bold text-slate-900 text-base truncate">{group.name}</h2>
             <p className="text-[10px] text-slate-400 font-medium">
-              {members.length} Members · {group.currency}
+              {members.length} Members ({claimedMembers.length} claimed · {unclaimedMembers.length}{' '}
+              unclaimed) · {group.currency}
               {isArchived && ' · Archived'}
             </p>
           </div>
@@ -377,7 +408,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
             }`}
           >
             <Users className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Balances</span>
+            <span>Balances &amp; Members</span>
           </button>
         </div>
 
@@ -601,7 +632,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                     className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white border border-emerald-200 text-emerald-800 text-[11px] font-bold hover:bg-emerald-50 cursor-pointer transition-colors"
                   >
                     <span>
-                      {showDebtTransfersBreakdown ? 'Hide Details' : 'Detailed Math'}
+                      {showDebtTransfersBreakdown ? 'Hide Math Trace' : 'Who Owes Who & Transfers'}
                     </span>
                     {showDebtTransfersBreakdown ? (
                       <ChevronUp className="w-3.5 h-3.5" />
@@ -642,41 +673,153 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
               </div>
             )}
 
+            {/* Group Members & Claim Status Directory */}
             <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-3">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Member Net Positions
-                </h3>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 gap-2">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Group Members ({members.length})
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {claimedMembers.length} claimed · {unclaimedMembers.length} unclaimed
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setShowDebtTransfersBreakdown((v) => !v)}
-                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+                  onClick={() => setShowAddMember(true)}
+                  className="px-2.5 py-1 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0"
                 >
-                  {showDebtTransfersBreakdown ? 'Hide Breakdown' : 'Inspect Math'}
+                  <UserPlus className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Add</span>
                 </button>
               </div>
+
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-100 text-[11px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setMemberFilter('all')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    memberFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  All ({members.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMemberFilter('claimed')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    memberFilter === 'claimed'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Claimed ({claimedMembers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMemberFilter('unclaimed')}
+                  className={`py-1.5 rounded-lg transition-all cursor-pointer ${
+                    memberFilter === 'unclaimed'
+                      ? 'bg-white text-amber-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Unclaimed ({unclaimedMembers.length})
+                </button>
+              </div>
+
               <div className="space-y-2">
-                {members.map((m: { _id: string; name: string }) => {
-                  const net = balancesInGroup.get(m._id) ?? 0;
-                  const display = formatCurrency(net, group.currency, true);
-                  return (
-                    <div key={m._id} className="flex items-center justify-between text-sm py-1 gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-700 font-bold flex items-center justify-center text-xs shrink-0">
-                          {m.name.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-semibold text-slate-800 truncate">{m.name}</span>
-                      </div>
-                      <span
-                        className={`font-mono font-bold text-xs shrink-0 ${
-                          net > 0 ? 'text-emerald-600' : net < 0 ? 'text-rose-600' : 'text-slate-400'
-                        }`}
+                {filteredMembers.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-2 text-center">
+                    No members match this filter.
+                  </p>
+                ) : (
+                  filteredMembers.map((m: any) => {
+                    const net = balancesInGroup.get(m._id) ?? 0;
+                    const display = formatCurrency(net, group.currency, true);
+                    const isClaimed = Boolean(m.userId);
+                    const isCurrentUser = clerkUserId != null && m.userId === clerkUserId;
+                    const isGroupCreator = m.userId != null && m.userId === (group as any).createdBy;
+
+                    return (
+                      <div
+                        key={m._id}
+                        className="p-2.5 rounded-2xl bg-slate-50/80 border border-slate-100 flex items-center justify-between gap-2"
                       >
-                        {net === 0 ? 'Settled' : display}
-                      </span>
-                    </div>
-                  );
-                })}
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs shrink-0 ${
+                              isClaimed
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100/80 text-amber-800'
+                            }`}
+                          >
+                            {m.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-slate-900 text-xs truncate">
+                                {m.name}
+                              </span>
+                              {isCurrentUser && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-slate-900 text-white text-[9px] font-bold uppercase">
+                                  You
+                                </span>
+                              )}
+                              {isGroupCreator && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-700 text-[9px] font-bold flex items-center gap-0.5">
+                                  <Crown className="w-2.5 h-2.5" />
+                                  Owner
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {isClaimed ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
+                                  <UserCheck className="w-3 h-3" />
+                                  Claimed account
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700">
+                                  <UserX className="w-3 h-3" />
+                                  Unclaimed slot
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {!isClaimed && clerkUserId && !currentUserAlreadyClaimedInGroup && (
+                            <button
+                              type="button"
+                              disabled={claimingMemberId === m._id}
+                              onClick={() => handleClaimMember(m._id)}
+                              className="px-2 py-1 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50"
+                            >
+                              {claimingMemberId === m._id ? 'Claiming…' : 'Claim'}
+                            </button>
+                          )}
+
+                          <span
+                            className={`font-mono font-bold text-xs ${
+                              net > 0
+                                ? 'text-emerald-600'
+                                : net < 0
+                                  ? 'text-rose-600'
+                                  : 'text-slate-400'
+                            }`}
+                          >
+                            {net === 0 ? 'Settled' : display}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -820,6 +963,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         isOpen={showAddMember}
         onClose={() => setShowAddMember(false)}
         groupId={groupId}
+        members={members}
+        groupOwnerId={(group as any).createdBy}
       />
       <SettleDebtModal
         isOpen={showSettle}
