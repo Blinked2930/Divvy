@@ -5,14 +5,32 @@ import { useUser } from '@clerk/clerk-react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import {
-  ArrowLeft, Plus, Receipt, UserPlus, Scale, ArrowRight, Share2, Check,
-  PieChart, Wallet, ChevronDown, ChevronUp, Settings2, Users, Handshake, Trash2,
+  ArrowLeft,
+  Plus,
+  Receipt,
+  UserPlus,
+  Scale,
+  ArrowRight,
+  Share2,
+  Check,
+  PieChart,
+  Wallet,
+  ChevronDown,
+  ChevronUp,
+  Settings2,
+  Users,
+  Handshake,
+  Trash2,
 } from 'lucide-react';
 import { AddExpenseModal } from './AddExpenseModal';
 import { AddMemberModal } from './AddMemberModal';
 import { SettleDebtModal } from './SettleDebtModal';
 import { GroupSettingsModal } from './GroupSettingsModal';
-import { simplifyDebts } from '../utils/debtCalculator';
+import {
+  simplifyDebtsWithTrace,
+  calculateDirectPairwiseDebts,
+  buildMemberMathLedgers,
+} from '../utils/debtCalculator';
 import { fetchExchangeRate, formatCurrency, EXCHANGE_RATES } from '../utils/currencies';
 
 interface GroupDetailViewProps {
@@ -39,6 +57,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   const [showSettle, setShowSettle] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [showDebtTransfersBreakdown, setShowDebtTransfersBreakdown] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const [editingExpense, setEditingExpense] = useState<any | null>(null);
@@ -68,7 +87,9 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [groupCurrency]);
 
   const convertALLFallback = useCallback(
@@ -105,9 +126,12 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     [groupCurrency, convertALLFallback]
   );
 
-  const fmtGroup = (amountGroup: number, showSign = false): string => {
-    return formatCurrency(Math.round(amountGroup * 100) / 100, groupCurrency, showSign);
-  };
+  const fmtGroup = useCallback(
+    (amountGroup: number, showSign = false): string => {
+      return formatCurrency(Math.round(amountGroup * 100) / 100, groupCurrency, showSign);
+    },
+    [groupCurrency]
+  );
 
   const balancesInGroup = useMemo(() => {
     const map = new Map<string, number>();
@@ -139,10 +163,33 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
     return map;
   }, [details, getExpenseGroupAmount, getSplitGroupAmount, getSettlementGroupAmount]);
 
-  const simplifiedDebts = useMemo(() => {
+  const directPairwiseDebts = useMemo(() => {
     if (!details) return [];
-    return simplifyDebts(details.members, balancesInGroup);
+    return calculateDirectPairwiseDebts(
+      details.members,
+      details.expenses || [],
+      details.settlements || [],
+      getSplitGroupAmount,
+      getSettlementGroupAmount
+    );
+  }, [details, getSplitGroupAmount, getSettlementGroupAmount]);
+
+  const { simplified: simplifiedDebts, steps: debtTransferSteps } = useMemo(() => {
+    if (!details) return { simplified: [], steps: [] };
+    return simplifyDebtsWithTrace(details.members, balancesInGroup);
   }, [details, balancesInGroup]);
+
+  const memberMathLedgers = useMemo(() => {
+    if (!details) return [];
+    return buildMemberMathLedgers(
+      details.members,
+      details.expenses || [],
+      details.settlements || [],
+      getExpenseGroupAmount,
+      getSplitGroupAmount,
+      getSettlementGroupAmount
+    );
+  }, [details, getExpenseGroupAmount, getSplitGroupAmount, getSettlementGroupAmount]);
 
   const memberSpending = useMemo(() => {
     const map = new Map<string, number>();
@@ -312,7 +359,9 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
             type="button"
             onClick={() => setActiveTab('transactions')}
             className={`py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'transactions' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              activeTab === 'transactions'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             <Receipt className="w-3.5 h-3.5 text-emerald-600" />
@@ -322,7 +371,9 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
             type="button"
             onClick={() => setActiveTab('balances')}
             className={`py-2 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeTab === 'balances' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              activeTab === 'balances'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             <Users className="w-3.5 h-3.5 text-indigo-600" />
@@ -354,7 +405,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                 >
                   <PieChart className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Breakdown</span>
-                  {showBreakdown ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  {showBreakdown ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
                 </button>
               </div>
 
@@ -413,14 +468,18 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
               {mergedTransactions.length === 0 ? (
                 <div className="p-8 rounded-3xl bg-white border border-slate-200 text-center space-y-2">
                   <Receipt className="w-6 h-6 text-slate-300 mx-auto" />
-                  <p className="text-xs text-slate-400">No expenses or settlements recorded for this group yet.</p>
+                  <p className="text-xs text-slate-400">
+                    No expenses or settlements recorded for this group yet.
+                  </p>
                 </div>
               ) : (
                 mergedTransactions.map((entry) => {
                   if (entry.kind === 'settlement') {
                     const set = entry.data;
-                    const fromName = members.find((m: any) => m._id === set.fromMemberId)?.name || 'Someone';
-                    const toName = members.find((m: any) => m._id === set.toMemberId)?.name || 'Someone';
+                    const fromName =
+                      members.find((m: any) => m._id === set.fromMemberId)?.name || 'Someone';
+                    const toName =
+                      members.find((m: any) => m._id === set.toMemberId)?.name || 'Someone';
                     const nativeAmount = typeof set.amount === 'number' ? set.amount : set.amountALL;
                     const isSameCurrency = set.currency === group.currency;
                     const setGroupAmt = getSettlementGroupAmount(set);
@@ -449,7 +508,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                                 </span>
                               </div>
                               <p className="text-[10px] text-slate-500 font-medium">
-                                Via {set.paidWith || 'Card'} · {new Date(set.timestamp).toLocaleDateString()}
+                                Via {set.paidWith || 'Card'} ·{' '}
+                                {new Date(set.timestamp).toLocaleDateString()}
                               </p>
                             </div>
                           </div>
@@ -481,7 +541,8 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
 
                   const exp = entry.data;
                   const isSameCurrency = exp.currency === group.currency;
-                  const paidByMember = members.find((m: any) => m._id === exp.paidByMemberId)?.name || 'Someone';
+                  const paidByMember =
+                    members.find((m: any) => m._id === exp.paidByMemberId)?.name || 'Someone';
                   const expGroupAmt = getExpenseGroupAmount(exp);
                   return (
                     <div
@@ -527,12 +588,29 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         )}
 
         {activeTab === 'balances' && (
-          <>
+          <div className="space-y-3">
             {simplifiedDebts.length > 0 && (
               <div className="p-4 rounded-3xl bg-emerald-50/60 border border-emerald-100 space-y-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-                  Suggested Settlements
-                </h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                    Suggested Settlements
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowDebtTransfersBreakdown((v) => !v)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white border border-emerald-200 text-emerald-800 text-[11px] font-bold hover:bg-emerald-50 cursor-pointer transition-colors"
+                  >
+                    <span>
+                      {showDebtTransfersBreakdown ? 'Hide Math Trace' : 'Who Owes Who & Transfers'}
+                    </span>
+                    {showDebtTransfersBreakdown ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
                 <div className="space-y-2">
                   {simplifiedDebts.map((debt, idx) => (
                     <div
@@ -550,7 +628,9 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                         </span>
                         <button
                           type="button"
-                          onClick={() => handleQuickSettle(debt.fromMemberId, debt.toMemberId, debt.amountALL)}
+                          onClick={() =>
+                            handleQuickSettle(debt.fromMemberId, debt.toMemberId, debt.amountALL)
+                          }
                           className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] cursor-pointer"
                         >
                           Pay
@@ -567,9 +647,13 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                 <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
                   Member Net Positions
                 </h3>
-                <span className="text-xs text-slate-500 font-medium">
-                  {group.currency}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowDebtTransfersBreakdown((v) => !v)}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+                >
+                  {showDebtTransfersBreakdown ? 'Hide Breakdown' : 'Inspect Math'}
+                </button>
               </div>
               <div className="space-y-2">
                 {members.map((m: { _id: string; name: string }) => {
@@ -595,7 +679,128 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                 })}
               </div>
             </div>
-          </>
+
+            {showDebtTransfersBreakdown && (
+              <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-4 animate-in fade-in">
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    1. Direct Pairwise Balances (Before Simplifying)
+                  </h4>
+                  {directPairwiseDebts.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">No direct pairwise balances.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {directPairwiseDebts.map((pair, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between px-3 py-2 rounded-2xl bg-slate-50 border border-slate-100 text-xs gap-2"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-bold text-rose-700 truncate">{pair.fromName}</span>
+                            <span className="text-slate-400">owes</span>
+                            <span className="font-bold text-emerald-700 truncate">
+                              {pair.toName}
+                            </span>
+                          </div>
+                          <span className="font-mono font-bold text-slate-800 shrink-0">
+                            {fmtGroup(pair.amount)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 pt-3 border-t border-slate-100">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    2. Debt Transfer / Offset Steps
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Offsets shift obligations between debtors and creditors so net totals stay unchanged with fewer payments.
+                  </p>
+                  {debtTransferSteps.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">Everything is already net-zero.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {debtTransferSteps.map((step, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-xs space-y-1"
+                        >
+                          <div className="flex items-center justify-between font-bold text-slate-900">
+                            <span>
+                              Step {idx + 1}: {step.debtorName} → {step.creditorName}
+                            </span>
+                            <span className="font-mono text-indigo-700">
+                              {fmtGroup(step.amount)}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            Remaining owed by {step.debtorName}:{' '}
+                            {fmtGroup(step.debtorRemainingAfter)} · Remaining owed to{' '}
+                            {step.creditorName}: {fmtGroup(step.creditorRemainingAfter)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-2 pt-3 border-t border-slate-100">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    3. Per-Member Math Reconciliation
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Adding each member&apos;s entries below equals their exact net balance (+ = owed to them, - = they owe).
+                  </p>
+                  <div className="space-y-2">
+                    {memberMathLedgers.map((ledger) => (
+                      <div
+                        key={ledger.memberId}
+                        className="p-3 rounded-2xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="text-slate-900">{ledger.name}</span>
+                          <span
+                            className={`font-mono ${
+                              ledger.netBalance > 0
+                                ? 'text-emerald-600'
+                                : ledger.netBalance < 0
+                                  ? 'text-rose-600'
+                                  : 'text-slate-500'
+                            }`}
+                          >
+                            Net: {formatCurrency(ledger.netBalance, group.currency, true)}
+                          </span>
+                        </div>
+                        {ledger.items.length === 0 ? (
+                          <p className="text-[11px] text-slate-400 italic">No balance entries</p>
+                        ) : (
+                          <div className="space-y-1 pt-1 border-t border-slate-200/60">
+                            {ledger.items.map((item) => (
+                              <div
+                                key={item.id}
+                                className="flex items-center justify-between text-[11px] gap-2"
+                              >
+                                <span className="text-slate-600 truncate">{item.label}</span>
+                                <span
+                                  className={`font-mono font-semibold shrink-0 ${
+                                    item.delta >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                                  }`}
+                                >
+                                  {formatCurrency(item.delta, group.currency, true)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </main>
 
@@ -611,7 +816,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
         members={members}
         initialExpense={editingExpense}
       />
-      <AddMemberModal isOpen={showAddMember} onClose={() => setShowAddMember(false)} groupId={groupId} />
+      <AddMemberModal
+        isOpen={showAddMember}
+        onClose={() => setShowAddMember(false)}
+        groupId={groupId}
+      />
       <SettleDebtModal
         isOpen={showSettle}
         onClose={() => {

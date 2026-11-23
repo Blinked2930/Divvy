@@ -113,24 +113,31 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   initialExpense,
 }) => {
   const { user } = useUser();
-  const addExpenseMutation = useMutation((api as any).groups?.addExpense || (api as any).groups?.addGroupExpense);
+  const addExpenseMutation = useMutation(
+    (api as any).groups?.addExpense || (api as any).groups?.addGroupExpense
+  );
   const updateExpenseMutation = useMutation((api as any).groups?.updateExpense);
   const deleteExpenseMutation = useMutation((api as any).groups?.deleteExpense);
 
   const [title, setTitle] = useState(initialExpense?.title || initialExpense?.description || '');
   const [amount, setAmount] = useState(initialExpense ? String(initialExpense.amount) : '');
-  const [selectedCurrency, setSelectedCurrency] = useState<string>(initialExpense?.currency || groupCurrency);
+  const [selectedCurrency, setSelectedCurrency] = useState<string>(
+    initialExpense?.currency || groupCurrency
+  );
   const [fxRateToGroup, setFxRateToGroup] = useState<string>('1');
   const [groupToALLRate, setGroupToALLRate] = useState<number>(groupCurrency === 'ALL' ? 1 : 100);
   const [category, setCategory] = useState(normalizeDivvyCategory(initialExpense?.category));
   const [expenseDate, setExpenseDate] = useState<string>(() =>
     toLocalDateInputValue(initialExpense?.timestamp ?? Date.now())
   );
-  const [paidByMemberId, setPaidByMemberId] = useState<string>(initialExpense?.paidByMemberId || members[0]?._id || '');
+  const [paidByMemberId, setPaidByMemberId] = useState<string>(
+    initialExpense?.paidByMemberId || members[0]?._id || ''
+  );
   const [paidWith, setPaidWith] = useState<'Card' | 'Cash'>(initialExpense?.paidWith || 'Card');
   const [syncToPulse, setSyncToPulse] = useState<boolean>(initialExpense?.syncToPulse !== false);
 
-  // Food & Grocery metadata (for Pulse Insights)
+  // Food & Grocery metadata (for Pulse Insights, behind Advanced toggle)
+  const [showFoodAdvanced, setShowFoodAdvanced] = useState<boolean>(false);
   const [vendorType, setVendorType] = useState<string | undefined>(initialExpense?.vendorType);
   const [foodType, setFoodType] = useState<string | undefined>(initialExpense?.foodType);
   const [estimatedMeals, setEstimatedMeals] = useState<string>(
@@ -156,7 +163,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     return Array.from(set);
   }, [groupCurrency, allowedCurrencies, selectedCurrency]);
 
-  // Determine whether the selected payer is the current user (so Cash/Card only shows when relevant)
   const isPaidBySelf = useMemo(() => {
     const payer = members.find((m) => m._id === paidByMemberId);
     if (!payer) return true;
@@ -205,11 +211,18 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setVendorType(initialExpense.vendorType);
       setFoodType(initialExpense.foodType);
       setEstimatedMeals(initialExpense.estimatedMeals ? String(initialExpense.estimatedMeals) : '');
+      setShowFoodAdvanced(
+        Boolean(
+          initialExpense.vendorType || initialExpense.foodType || initialExpense.estimatedMeals
+        )
+      );
       setSplitMode(initialExpense.splitType || 'equal');
 
       const existingSplits: Array<{ memberId: string; amountGroup?: number; amountALL: number }> =
         initialExpense.splits ?? [];
-      const activeIds = existingSplits.filter((s) => (s.amountGroup ?? s.amountALL) > 0).map((s) => s.memberId);
+      const activeIds = existingSplits
+        .filter((s) => (s.amountGroup ?? s.amountALL) > 0)
+        .map((s) => s.memberId);
       setSelectedMemberIds(activeIds.length > 0 ? activeIds : members.map((m) => m._id));
 
       if (initialExpense.splitType === 'shares') {
@@ -244,6 +257,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setVendorType(undefined);
       setFoodType(undefined);
       setEstimatedMeals('');
+      setShowFoodAdvanced(false);
       setSelectedMemberIds(members.map((m) => m._id));
       setSplitMode('equal');
     }
@@ -283,7 +297,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   }, [isOpen, groupCurrency]);
 
   const numAmount = parseFloat(amount) || 0;
-  const numRateToGroup = selectedCurrency === groupCurrency ? 1 : (parseFloat(fxRateToGroup) || 0);
+  const numRateToGroup = selectedCurrency === groupCurrency ? 1 : parseFloat(fxRateToGroup) || 0;
   const amountInGroupCurrency = Math.round(numAmount * numRateToGroup * 100) / 100;
   const amountInALL =
     groupCurrency === 'ALL'
@@ -312,6 +326,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setVendorType(undefined);
       setFoodType(undefined);
       setEstimatedMeals('');
+      setShowFoodAdvanced(false);
     } else if (vendorType && !getVendorOptionsForCategory(nextCat).includes(vendorType)) {
       setVendorType(undefined);
     }
@@ -360,7 +375,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     }
 
     if (numRateToGroup <= 0 || amountInGroupCurrency <= 0) {
-      setErrorMsg(`Please enter a valid exchange rate from ${selectedCurrency} to ${groupCurrency}.`);
+      setErrorMsg(
+        `Please enter a valid exchange rate from ${selectedCurrency} to ${groupCurrency}.`
+      );
       return;
     }
 
@@ -406,7 +423,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         for (let i = 1; i < converted.length; i++) {
           if (converted[i].amountGroup > converted[largestIdx].amountGroup) largestIdx = i;
         }
-        converted[largestIdx].amountGroup = Math.round((converted[largestIdx].amountGroup + drift) * 100) / 100;
+        converted[largestIdx].amountGroup =
+          Math.round((converted[largestIdx].amountGroup + drift) * 100) / 100;
       }
 
       groupSplits = converted;
@@ -435,13 +453,16 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
 
     const parsedMeals = parseFloat(estimatedMeals);
     const validMeals =
-      showFoodMetadata && Number.isFinite(parsedMeals) && parsedMeals > 0 ? parsedMeals : undefined;
+      showFoodMetadata && showFoodAdvanced && Number.isFinite(parsedMeals) && parsedMeals > 0
+        ? parsedMeals
+        : undefined;
 
     const resolvedTimestamp = fromLocalDateInputValue(expenseDate, initialExpense?.timestamp);
 
     setIsSubmitting(true);
     try {
-      const fxRateToALL = numAmount > 0 ? Math.round((amountInALL / numAmount) * 1000000) / 1000000 : 1;
+      const fxRateToALL =
+        numAmount > 0 ? Math.round((amountInALL / numAmount) * 1000000) / 1000000 : 1;
 
       const payload = {
         title: title.trim(),
@@ -452,8 +473,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         fxRateToGroup: numRateToGroup,
         fxRateToALL,
         category: category.trim() || 'Other',
-        vendorType: showFoodMetadata ? vendorType : undefined,
-        foodType: showFoodMetadata ? foodType : undefined,
+        vendorType: showFoodMetadata && showFoodAdvanced ? vendorType : undefined,
+        foodType: showFoodMetadata && showFoodAdvanced ? foodType : undefined,
         estimatedMeals: validMeals,
         paidByMemberId: paidByMemberId as Id<'groupMembers'>,
         paidWith: isPaidBySelf ? paidWith : undefined,
@@ -548,7 +569,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Amount *
                 </label>
@@ -559,18 +580,18 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 font-mono text-sm font-bold focus:outline-none focus:border-emerald-500"
+                  className="w-full min-w-0 px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 font-mono text-sm font-bold focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Currency
                 </label>
                 <button
                   type="button"
                   onClick={() => setShowCurrencyPopover(true)}
-                  className="w-full px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
+                  className="w-full min-w-0 px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-bold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
                 >
                   <span>{selectedCurrency}</span>
                   <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
@@ -585,7 +606,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
                     Group Currency Equivalent ({groupCurrency})
                   </span>
-                  <span className="font-mono">{formatCurrency(amountInGroupCurrency, groupCurrency)}</span>
+                  <span className="font-mono">
+                    {formatCurrency(amountInGroupCurrency, groupCurrency)}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-amber-700 text-[10px]">1 {selectedCurrency} =</span>
@@ -602,28 +625,28 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Category
                 </label>
                 <button
                   type="button"
                   onClick={() => setShowCategoryPopover(true)}
-                  className="w-full px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
+                  className="w-full min-w-0 px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
                 >
                   <span className="truncate">{category}</span>
                   <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
                 </button>
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Paid By *
                 </label>
                 <button
                   type="button"
                   onClick={() => setShowPaidByPopover(true)}
-                  className="w-full px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
+                  className="w-full min-w-0 px-3 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold flex items-center justify-between cursor-pointer hover:border-slate-300 transition-colors"
                 >
                   <span className="truncate">{paidByName}</span>
                   <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
@@ -631,102 +654,118 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Food & Grocery Details (for Pulse Insights) */}
+            {/* Food & Grocery Details (for Pulse Insights, behind Advanced toggle) */}
             {showFoodMetadata && (
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
                     <Utensils className="w-3 h-3 text-emerald-600" />
-                    Food Insights (Optional)
+                    Food Insights
                   </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-semibold text-slate-500">Meals</span>
-                    <input
-                      type="number"
-                      step="any"
-                      min="0"
-                      placeholder="—"
-                      value={estimatedMeals}
-                      onChange={(e) => setEstimatedMeals(e.target.value)}
-                      className="w-14 px-2 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs text-center text-slate-800 focus:outline-none focus:border-emerald-500"
-                    />
+                  <button
+                    type="button"
+                    onClick={() => setShowFoodAdvanced((v) => !v)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 hover:border-slate-300 cursor-pointer transition-colors"
+                  >
+                    {showFoodAdvanced ? 'Hide Advanced' : 'Advanced'}
+                  </button>
+                </div>
+
+                {showFoodAdvanced && (
+                  <div className="space-y-2.5 pt-1 border-t border-slate-200/60 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-slate-500">
+                        Estimated Meals
+                      </span>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        placeholder="—"
+                        value={estimatedMeals}
+                        onChange={(e) => setEstimatedMeals(e.target.value)}
+                        className="w-16 px-2 py-1 rounded-lg bg-white border border-slate-200 font-mono text-xs text-center text-slate-800 focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    {vendorOptions.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {vendorOptions.map((vOpt) => {
+                          const active = vendorType === vOpt;
+                          return (
+                            <button
+                              key={vOpt}
+                              type="button"
+                              onClick={() => setVendorType(active ? undefined : vOpt)}
+                              className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
+                                active
+                                  ? 'bg-emerald-600 text-white shadow-xs'
+                                  : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              {vOpt}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-200/60">
+                      {FOOD_TYPES.map((fOpt) => {
+                        const active = foodType === fOpt;
+                        return (
+                          <button
+                            key={fOpt}
+                            type="button"
+                            onClick={() => setFoodType(active ? undefined : fOpt)}
+                            className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
+                              active
+                                ? 'bg-slate-800 text-white shadow-xs'
+                                : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
+                            {fOpt}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {vendorOptions.map((vOpt) => {
-                    const active = vendorType === vOpt;
-                    return (
-                      <button
-                        key={vOpt}
-                        type="button"
-                        onClick={() => setVendorType(active ? undefined : vOpt)}
-                        className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
-                          active
-                            ? 'bg-emerald-600 text-white shadow-xs'
-                            : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
-                        }`}
-                      >
-                        {vOpt}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-200/60">
-                  {FOOD_TYPES.map((fOpt) => {
-                    const active = foodType === fOpt;
-                    return (
-                      <button
-                        key={fOpt}
-                        type="button"
-                        onClick={() => setFoodType(active ? undefined : fOpt)}
-                        className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-all cursor-pointer ${
-                          active
-                            ? 'bg-slate-800 text-white shadow-xs'
-                            : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
-                        }`}
-                      >
-                        {fOpt}
-                      </button>
-                    );
-                  })}
-                </div>
+                )}
               </div>
             )}
 
             {/* Date & Pulse Sync Row */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
+            <div className="grid grid-cols-2 gap-3 items-start">
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Date
                 </label>
-                <div className="relative">
+                <div className="relative min-w-0">
                   <input
                     type="date"
                     value={expenseDate}
                     onChange={(e) => setExpenseDate(e.target.value)}
-                    className="w-full pl-8 pr-2.5 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                    className="w-full min-w-0 max-w-full pl-8 pr-2 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold focus:outline-none focus:border-emerald-500"
                   />
-                  <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Pulse Budget
                 </label>
                 <button
                   type="button"
                   onClick={() => setSyncToPulse((v) => !v)}
-                  className={`w-full py-2.5 px-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  className={`w-full min-w-0 py-2.5 px-3 rounded-2xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     syncToPulse
                       ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
                       : 'bg-slate-50 border-slate-200 text-slate-400 hover:border-slate-300'
                   }`}
                 >
-                  {syncToPulse && <Check className="w-3.5 h-3.5" />}
-                  <span>{syncToPulse ? 'Counted' : 'Excluded'}</span>
+                  {syncToPulse && <Check className="w-3.5 h-3.5 shrink-0" />}
+                  <span className="truncate">{syncToPulse ? 'Counted' : 'Excluded'}</span>
                 </button>
               </div>
             </div>
@@ -775,7 +814,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   type="button"
                   onClick={() => setSplitMode('equal')}
                   className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                    splitMode === 'equal' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    splitMode === 'equal'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   <Users className="w-3.5 h-3.5" />
@@ -785,7 +826,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   type="button"
                   onClick={() => setSplitMode('exact')}
                   className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                    splitMode === 'exact' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    splitMode === 'exact'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   <Calculator className="w-3.5 h-3.5" />
@@ -795,7 +838,9 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                   type="button"
                   onClick={() => setSplitMode('shares')}
                   className={`py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                    splitMode === 'shares' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    splitMode === 'shares'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   <PieChart className="w-3.5 h-3.5" />
@@ -830,9 +875,19 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             {splitMode === 'exact' && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs px-1 font-medium">
-                  <span className="text-slate-500">Allocated: {totalExactNative} {selectedCurrency}</span>
-                  <span className={Math.abs(exactDifferenceNative) <= 0.01 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                    {exactDifferenceNative === 0 ? 'Balanced' : `${exactDifferenceNative} ${selectedCurrency} remaining`}
+                  <span className="text-slate-500">
+                    Allocated: {totalExactNative} {selectedCurrency}
+                  </span>
+                  <span
+                    className={
+                      Math.abs(exactDifferenceNative) <= 0.01
+                        ? 'text-emerald-600 font-bold'
+                        : 'text-rose-600 font-bold'
+                    }
+                  >
+                    {exactDifferenceNative === 0
+                      ? 'Balanced'
+                      : `${exactDifferenceNative} ${selectedCurrency} remaining`}
                   </span>
                 </div>
                 <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
@@ -922,7 +977,13 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               className="w-full py-3.5 px-4 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer mt-4"
             >
               <Check className="w-4 h-4" />
-              <span>{isSubmitting ? 'Saving...' : initialExpense ? 'Update Expense' : 'Save Expense'}</span>
+              <span>
+                {isSubmitting
+                  ? 'Saving...'
+                  : initialExpense
+                    ? 'Update Expense'
+                    : 'Save Expense'}
+              </span>
             </button>
           </form>
 
