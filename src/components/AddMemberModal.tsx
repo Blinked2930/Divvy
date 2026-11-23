@@ -18,8 +18,9 @@ import {
 export interface GroupRosterMember {
   _id: Id<'groupMembers'>;
   name: string;
-  userId?: string | null;
-  claimedByUserId?: string | null;
+  userId?: string;
+  claimed?: boolean;
+  isClaimed?: boolean;
 }
 
 interface AddMemberModalProps {
@@ -32,16 +33,10 @@ interface AddMemberModalProps {
 
 type RosterFilter = 'all' | 'claimed' | 'unclaimed';
 
-function getLinkedUserId(member: GroupRosterMember): string | null {
-  const raw = member.userId ?? member.claimedByUserId;
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower === 'unclaimed' || lower === 'none' || lower === 'null' || lower === 'undefined') {
-    return null;
-  }
-  return trimmed;
+function isMemberClaimed(m: GroupRosterMember): boolean {
+  if (typeof m.isClaimed === 'boolean') return m.isClaimed;
+  if (typeof m.claimed === 'boolean') return m.claimed;
+  return typeof m.userId === 'string' && m.userId.trim().length > 0 && m.userId !== 'anonymous';
 }
 
 export const AddMemberModal: React.FC<AddMemberModalProps> = ({
@@ -54,12 +49,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   const { user } = useUser();
   const clerkUserId = user?.id ?? null;
 
-  const addMemberMutation = useMutation(
-    (api as any).groups?.addMember || (api as any).groups?.addGroupMember
-  );
-  const claimMemberMutation = useMutation(
-    (api as any).groups?.claimMember || (api as any).groups?.claimGroupMember
-  );
+  const addMemberMutation = useMutation(api.groups.addMember);
+  const claimMemberMutation = useMutation(api.groups.claimMember);
 
   const [name, setName] = useState('');
   const [filter, setFilter] = useState<RosterFilter>('all');
@@ -69,25 +60,29 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const claimedCount = useMemo(
-    () => members.filter((m) => Boolean(getLinkedUserId(m))).length,
+    () => members.filter((m) => isMemberClaimed(m)).length,
     [members]
   );
 
   const unclaimedCount = useMemo(
-    () => members.filter((m) => !getLinkedUserId(m)).length,
+    () => members.filter((m) => !isMemberClaimed(m)).length,
     [members]
   );
 
   const currentUserAlreadyClaimed = useMemo(
-    () => Boolean(clerkUserId && members.some((m) => getLinkedUserId(m) === clerkUserId)),
+    () =>
+      Boolean(
+        clerkUserId &&
+          members.some((m) => isMemberClaimed(m) && m.userId === clerkUserId)
+      ),
     [clerkUserId, members]
   );
 
   const visibleMembers = useMemo(() => {
     return members.filter((m) => {
-      const linked = getLinkedUserId(m);
-      if (filter === 'claimed') return Boolean(linked);
-      if (filter === 'unclaimed') return !linked;
+      const claimed = isMemberClaimed(m);
+      if (filter === 'claimed') return claimed;
+      if (filter === 'unclaimed') return !claimed;
       return true;
     });
   }, [members, filter]);
@@ -168,7 +163,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
-            title="Close (never mind)"
+            title="Close"
           >
             <X className="w-5 h-5" />
           </button>
@@ -197,7 +192,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             </button>
           </div>
           <p className="text-[10px] text-slate-400 truncate">
-            Added people start unclaimed so you can split expenses right away.
+            New people start unclaimed and can claim their name later.
           </p>
         </form>
 
@@ -270,10 +265,9 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
               </p>
             ) : (
               visibleMembers.map((m) => {
-                const linkedUserId = getLinkedUserId(m);
-                const isClaimed = Boolean(linkedUserId);
-                const isMe = Boolean(clerkUserId && linkedUserId === clerkUserId);
-                const isOwner = Boolean(groupOwnerId && linkedUserId === groupOwnerId);
+                const claimed = isMemberClaimed(m);
+                const isMe = Boolean(claimed && clerkUserId && m.userId === clerkUserId);
+                const isOwner = Boolean(claimed && groupOwnerId && m.userId === groupOwnerId);
 
                 return (
                   <div
@@ -283,7 +277,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div
                         className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs shrink-0 ${
-                          isClaimed
+                          claimed
                             ? 'bg-emerald-100 text-emerald-800'
                             : 'bg-amber-100/80 text-amber-800'
                         }`}
@@ -308,7 +302,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                           )}
                         </div>
                         <div className="mt-0.5">
-                          {isClaimed ? (
+                          {claimed ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
                               <UserCheck className="w-3 h-3" />
                               Claimed
@@ -323,7 +317,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
                       </div>
                     </div>
 
-                    {!isClaimed && clerkUserId && !currentUserAlreadyClaimed && (
+                    {!claimed && clerkUserId && !currentUserAlreadyClaimed && (
                       <button
                         type="button"
                         disabled={claimingId === m._id}

@@ -121,6 +121,8 @@ export default defineSchema({
   groupMembers: defineTable({
     groupId: v.id("groups"),
     userId: v.optional(v.string()),
+    claimed: v.optional(v.boolean()),
+    claimedAt: v.optional(v.number()),
     name: v.string(),
     email: v.optional(v.string()),
     avatarUrl: v.optional(v.string()),

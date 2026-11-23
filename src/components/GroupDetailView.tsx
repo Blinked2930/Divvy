@@ -47,24 +47,20 @@ type GroupTransactionItem =
   | { kind: 'expense'; data: any; timestamp: number }
   | { kind: 'settlement'; data: any; timestamp: number };
 
-function getLinkedUserId(member: any): string | null {
-  const raw = member?.userId ?? member?.claimedByUserId;
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower === 'unclaimed' || lower === 'none' || lower === 'null' || lower === 'undefined') {
-    return null;
-  }
-  return trimmed;
+function isMemberClaimed(m: any): boolean {
+  if (typeof m?.isClaimed === 'boolean') return m.isClaimed;
+  if (typeof m?.claimed === 'boolean') return m.claimed;
+  return (
+    typeof m?.userId === 'string' &&
+    m.userId.trim().length > 0 &&
+    m.userId !== 'anonymous'
+  );
 }
 
 export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBack }) => {
   const details = useQuery((api as any).groups?.getGroupDetails, { groupId });
   const deleteSettlementMutation = useMutation((api as any).groups?.deleteSettlement);
-  const claimMemberMutation = useMutation(
-    (api as any).groups?.claimMember || (api as any).groups?.claimGroupMember
-  );
+  const claimMemberMutation = useMutation(api.groups.claimMember);
 
   const { user } = useUser();
   const clerkUserId = user?.id ?? null;
@@ -276,15 +272,16 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
   const isArchived = groupStatus === 'archived';
   const isOwner = clerkUserId != null && (group as any).createdBy === clerkUserId;
 
-  const claimedMembers = members.filter((m: any) => Boolean(getLinkedUserId(m)));
-  const unclaimedMembers = members.filter((m: any) => !getLinkedUserId(m));
+  const claimedMembers = members.filter((m: any) => isMemberClaimed(m));
+  const unclaimedMembers = members.filter((m: any) => !isMemberClaimed(m));
   const currentUserAlreadyClaimedInGroup =
-    clerkUserId != null && members.some((m: any) => getLinkedUserId(m) === clerkUserId);
+    clerkUserId != null &&
+    members.some((m: any) => isMemberClaimed(m) && m.userId === clerkUserId);
 
   const filteredMembers = members.filter((m: any) => {
-    const linked = getLinkedUserId(m);
-    if (memberFilter === 'claimed') return Boolean(linked);
-    if (memberFilter === 'unclaimed') return !linked;
+    const claimed = isMemberClaimed(m);
+    if (memberFilter === 'claimed') return claimed;
+    if (memberFilter === 'unclaimed') return !claimed;
     return true;
   });
 
@@ -645,7 +642,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                     className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-white border border-emerald-200 text-emerald-800 text-[11px] font-bold hover:bg-emerald-50 cursor-pointer transition-colors"
                   >
                     <span>
-                      {showDebtTransfersBreakdown ? 'Hide Details' : 'Math Details'}
+                      {showDebtTransfersBreakdown ? 'Hide Math Trace' : 'Who Owes Who & Transfers'}
                     </span>
                     {showDebtTransfersBreakdown ? (
                       <ChevronUp className="w-3.5 h-3.5" />
@@ -752,11 +749,11 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                   filteredMembers.map((m: any) => {
                     const net = balancesInGroup.get(m._id) ?? 0;
                     const display = formatCurrency(net, group.currency, true);
-                    const linkedUserId = getLinkedUserId(m);
-                    const isClaimed = Boolean(linkedUserId);
-                    const isCurrentUser = clerkUserId != null && linkedUserId === clerkUserId;
+                    const claimed = isMemberClaimed(m);
+                    const isCurrentUser =
+                      claimed && clerkUserId != null && m.userId === clerkUserId;
                     const isGroupCreator =
-                      linkedUserId != null && linkedUserId === (group as any).createdBy;
+                      claimed && m.userId != null && m.userId === (group as any).createdBy;
 
                     return (
                       <div
@@ -766,7 +763,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div
                             className={`w-8 h-8 rounded-xl font-bold flex items-center justify-center text-xs shrink-0 ${
-                              isClaimed
+                              claimed
                                 ? 'bg-emerald-100 text-emerald-800'
                                 : 'bg-amber-100/80 text-amber-800'
                             }`}
@@ -792,7 +789,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                             </div>
 
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              {isClaimed ? (
+                              {claimed ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
                                   <UserCheck className="w-3 h-3" />
                                   Claimed account
@@ -808,7 +805,7 @@ export const GroupDetailView: React.FC<GroupDetailViewProps> = ({ groupId, onBac
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {!isClaimed && clerkUserId && !currentUserAlreadyClaimedInGroup && (
+                          {!claimed && clerkUserId && !currentUserAlreadyClaimedInGroup && (
                             <button
                               type="button"
                               disabled={claimingMemberId === m._id}

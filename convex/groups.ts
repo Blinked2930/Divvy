@@ -34,6 +34,18 @@ function normalizeName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function isMemberRowClaimed(member: { userId?: string; claimed?: boolean }): boolean {
+  if (member.claimed === false) return false;
+  if (member.claimed === true) {
+    return typeof member.userId === "string" && member.userId.trim().length > 0 && member.userId !== "anonymous";
+  }
+  return (
+    typeof member.userId === "string" &&
+    member.userId.trim().length > 0 &&
+    member.userId !== "anonymous"
+  );
+}
+
 function resolveSelfMember<T extends { userId?: string; name: string }>(
   members: T[],
   userId: string,
@@ -342,10 +354,20 @@ export const getGroupDetails = query({
       return null;
     }
 
-    const members = await ctx.db
+    const rawMembers = await ctx.db
       .query("groupMembers")
       .filter((q) => q.eq(q.field("groupId"), args.groupId))
       .collect();
+
+    const members = rawMembers.map((m) => {
+      const isClaimed = isMemberRowClaimed(m);
+      return {
+        ...m,
+        userId: isClaimed ? m.userId : undefined,
+        claimed: isClaimed,
+        isClaimed,
+      };
+    });
 
     const expenses = await ctx.db
       .query("groupExpenses")
@@ -414,10 +436,20 @@ export const getAllMyGroupDetails = query({
       const groupStatus = group.status ?? "active";
       if (!args.includeArchived && groupStatus === "archived") continue;
 
-      const members = await ctx.db
+      const rawMembers = await ctx.db
         .query("groupMembers")
         .filter((q) => q.eq(q.field("groupId"), memberRow.groupId))
         .collect();
+
+      const members = rawMembers.map((m) => {
+        const isClaimed = isMemberRowClaimed(m);
+        return {
+          ...m,
+          userId: isClaimed ? m.userId : undefined,
+          claimed: isClaimed,
+          isClaimed,
+        };
+      });
 
       const expenses = await ctx.db
         .query("groupExpenses")
@@ -716,9 +748,7 @@ export const getUnclaimedMembers = query({
       .filter((q) => q.eq(q.field("groupId"), group._id))
       .collect();
 
-    const unclaimedMembers = members.filter(
-      (m) => !m.userId || m.userId === "anonymous"
-    );
+    const unclaimedMembers = members.filter((m) => !isMemberRowClaimed(m));
 
     return {
       groupId: group._id,
@@ -749,6 +779,7 @@ export const createGroup = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     const userId = identity?.subject ?? "anonymous";
+    const isAuthenticated = Boolean(identity?.subject && identity.subject !== "anonymous");
     const now = Date.now();
     const inviteCode = generateInviteCode();
 
@@ -805,7 +836,9 @@ export const createGroup = mutation({
 
     const creatorMemberId = await ctx.db.insert("groupMembers", {
       groupId,
-      userId,
+      userId: isAuthenticated ? userId : undefined,
+      claimed: isAuthenticated,
+      claimedAt: isAuthenticated ? now : undefined,
       name: args.memberName.trim(),
       joinedAt: now,
     });
@@ -815,7 +848,7 @@ export const createGroup = mutation({
         if (name.trim()) {
           await ctx.db.insert("groupMembers", {
             groupId,
-            userId: "anonymous",
+            claimed: false,
             name: name.trim(),
             joinedAt: now,
           });
@@ -1024,6 +1057,7 @@ export const joinGroup = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     const userId = identity?.subject ?? "anonymous";
+    const isAuthenticated = Boolean(identity?.subject && identity.subject !== "anonymous");
     const now = Date.now();
 
     const queryStr = args.groupIdOrCode.trim().toUpperCase();
@@ -1039,23 +1073,27 @@ export const joinGroup = mutation({
       throw new Error("Group not found with that Invite Code or ID.");
     }
 
-    const existingMembers = await ctx.db
-      .query("groupMembers")
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("groupId"), group._id),
-          q.eq(q.field("userId"), userId)
+    if (isAuthenticated) {
+      const existingMembers = await ctx.db
+        .query("groupMembers")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("groupId"), group._id),
+            q.eq(q.field("userId"), userId)
+          )
         )
-      )
-      .collect();
+        .collect();
 
-    if (existingMembers.length > 0) {
-      return { groupId: group._id, memberId: existingMembers[0]._id };
+      if (existingMembers.length > 0) {
+        return { groupId: group._id, memberId: existingMembers[0]._id };
+      }
     }
 
     const memberId = await ctx.db.insert("groupMembers", {
       groupId: group._id,
-      userId,
+      userId: isAuthenticated ? userId : undefined,
+      claimed: isAuthenticated,
+      claimedAt: isAuthenticated ? now : undefined,
       name: args.memberName.trim(),
       joinedAt: now,
     });
@@ -1066,19 +1104,54 @@ export const joinGroup = mutation({
 
 export const claimMember = mutation({
   args: {
+    groupId: v.optional(v.id("groups")),
     memberId: v.id("groupMembers"),
     name: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject ?? "anonymous";
+    const userId = identity?.subject;
+    if (!userId || userId === "anonymous") {
+      throw new Error("You must be signed in to claim a member slot.");
+    }
 
     const member = await ctx.db.get(args.memberId);
     if (!member) {
-      throw new Error("Member profile not found");
+      throw new Error("Member profile not found.");
     }
 
-    const patchData: { userId: string; name?: string } = { userId };
+    if (args.groupId && member.groupId !== args.groupId) {
+      throw new Error("Member does not belong to this group.");
+    }
+
+    if (isMemberRowClaimed(member) && member.userId !== userId) {
+      throw new Error("This member slot has already been claimed by another user.");
+    }
+
+    const groupMembers = await ctx.db
+      .query("groupMembers")
+      .filter((q) => q.eq(q.field("groupId"), member.groupId))
+      .collect();
+
+    const alreadyClaimedOther = groupMembers.find(
+      (m) => m._id !== args.memberId && isMemberRowClaimed(m) && m.userId === userId
+    );
+    if (alreadyClaimedOther) {
+      throw new Error(`You have already claimed "${alreadyClaimedOther.name}" in this group.`);
+    }
+
+    const now = Date.now();
+    const patchData: {
+      userId: string;
+      claimed: boolean;
+      claimedAt: number;
+      name?: string;
+    } = {
+      userId,
+      claimed: true,
+      claimedAt: now,
+    };
+
     if (args.name?.trim()) {
       patchData.name = args.name.trim();
     }
@@ -1096,10 +1169,18 @@ export const addMember = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
+    const validUserId =
+      typeof args.userId === "string" && args.userId.trim().length > 0 && args.userId !== "anonymous"
+        ? args.userId.trim()
+        : undefined;
+    const isClaimed = Boolean(validUserId);
+
     const memberId = await ctx.db.insert("groupMembers", {
       groupId: args.groupId,
       name: args.name.trim(),
-      userId: args.userId ?? "anonymous",
+      userId: validUserId,
+      claimed: isClaimed,
+      claimedAt: isClaimed ? now : undefined,
       joinedAt: now,
     });
     return memberId;
