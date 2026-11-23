@@ -13,6 +13,8 @@ import {
   Users,
   AlertCircle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   RefreshCw,
   Trash2,
   CreditCard,
@@ -56,6 +58,7 @@ export const DIVVY_CATEGORIES = [
 ] as const;
 
 const FOOD_TYPES = ['Grocery', 'Ready Meal', 'Snack', 'Beverage'] as const;
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const;
 
 function getVendorOptionsForCategory(category: string): string[] {
   if (category === 'Groceries') return ['Pazar', 'Supermarket', 'Bakery', 'Other'];
@@ -87,6 +90,17 @@ function toLocalDateInputValue(ms: number): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDisplayDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function fromLocalDateInputValue(dateStr: string, referenceMs?: number): number {
@@ -130,6 +144,12 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   const [expenseDate, setExpenseDate] = useState<string>(() =>
     toLocalDateInputValue(initialExpense?.timestamp ?? Date.now())
   );
+  const [showDatePopover, setShowDatePopover] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
+    const base = new Date(initialExpense?.timestamp ?? Date.now());
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
   const [paidByMemberId, setPaidByMemberId] = useState<string>(
     initialExpense?.paidByMemberId || members[0]?._id || ''
   );
@@ -199,12 +219,16 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             ? Math.round((savedGroupTotal / initialExpense.amount) * 10000) / 10000
             : undefined);
 
+      const ts = initialExpense.timestamp ?? Date.now();
+      const dt = new Date(ts);
+
       setTitle(initialExpense.title || initialExpense.description || '');
       setAmount(String(initialExpense.amount));
       setSelectedCurrency(expCurrency);
       if (inferredGroupRate) setFxRateToGroup(String(inferredGroupRate));
       setCategory(normalizeDivvyCategory(initialExpense.category));
-      setExpenseDate(toLocalDateInputValue(initialExpense.timestamp ?? Date.now()));
+      setExpenseDate(toLocalDateInputValue(ts));
+      setCalendarMonth(new Date(dt.getFullYear(), dt.getMonth(), 1));
       setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
       setPaidWith(initialExpense.paidWith || 'Card');
       setSyncToPulse(initialExpense.syncToPulse !== false);
@@ -245,12 +269,14 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     } else {
       const defaultPayer =
         (user?.id && members.find((m) => m.userId === user.id)?._id) || members[0]?._id || '';
+      const now = new Date();
       setTitle('');
       setAmount('');
       setSelectedCurrency(groupCurrency);
       setFxRateToGroup('1');
       setCategory('Other');
-      setExpenseDate(toLocalDateInputValue(Date.now()));
+      setExpenseDate(toLocalDateInputValue(now.getTime()));
+      setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
       setPaidByMemberId(defaultPayer);
       setPaidWith('Card');
       setSyncToPulse(true);
@@ -264,6 +290,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
 
     setSharesMap(initialShares);
     setExactAmounts(initialExacts);
+    setShowDatePopover(false);
     setErrorMsg(null);
   }, [isOpen, groupCurrency, initialExpense, members, user?.id]);
 
@@ -315,10 +342,29 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     return allocateByShares(amountInGroupCurrency, weights);
   }, [splitMode, selectedMemberIds, sharesMap, amountInGroupCurrency]);
 
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstDayOfWeek = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const cells: Array<{ day: number | null; iso: string | null }> = [];
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      cells.push({ day: null, iso: null });
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const mm = String(month + 1).padStart(2, '0');
+      const dd = String(day).padStart(2, '0');
+      cells.push({ day, iso: `${year}-${mm}-${dd}` });
+    }
+    return cells;
+  }, [calendarMonth]);
+
   if (!isOpen) return null;
 
   const showFoodMetadata = category === 'Groceries' || category === 'Eating Out';
   const vendorOptions = getVendorOptionsForCategory(category);
+  const todayIso = toLocalDateInputValue(Date.now());
 
   const handleSelectCategory = (nextCat: string) => {
     setCategory(nextCat);
@@ -520,7 +566,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       >
         <div
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 space-y-4 font-sans max-h-[85vh] overflow-y-auto"
+          className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 space-y-4 font-sans max-h-[85vh] overflow-y-auto overflow-x-hidden"
         >
           <div className="flex items-center justify-between pb-2 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -553,7 +599,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4 min-w-0">
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                 Description *
@@ -568,7 +614,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 min-w-0">
               <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Amount *
@@ -624,7 +670,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 min-w-0">
               <div className="min-w-0">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                   Category
@@ -735,24 +781,30 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
             )}
 
             {/* Date & Pulse Sync Row */}
-            <div className="grid grid-cols-2 gap-3 items-start">
-              <div className="min-w-0">
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+            <div className="grid grid-cols-2 gap-3 min-w-0">
+              <div className="min-w-0 overflow-hidden">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 truncate">
                   Date
                 </label>
-                <div className="relative min-w-0">
-                  <input
-                    type="date"
-                    value={expenseDate}
-                    onChange={(e) => setExpenseDate(e.target.value)}
-                    className="w-full min-w-0 max-w-full pl-8 pr-2 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-900 text-xs font-semibold focus:outline-none focus:border-emerald-500"
-                  />
-                  <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const [y, m] = expenseDate.split('-').map(Number);
+                    if (y && m) setCalendarMonth(new Date(y, m - 1, 1));
+                    setShowDatePopover(true);
+                  }}
+                  className="w-full min-w-0 px-3 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-slate-300 text-slate-900 text-xs font-semibold flex items-center justify-between gap-1.5 cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center gap-1.5 min-w-0 truncate">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span className="truncate">{formatDisplayDate(expenseDate)}</span>
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                </button>
               </div>
 
-              <div className="min-w-0">
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+              <div className="min-w-0 overflow-hidden">
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 truncate">
                   Pulse Budget
                 </label>
                 <button
@@ -986,6 +1038,110 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </span>
             </button>
           </form>
+
+          {showDatePopover && (
+            <div
+              onClick={() => setShowDatePopover(false)}
+              className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in"
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-xs bg-white rounded-3xl border border-slate-200 shadow-2xl p-4 space-y-3 font-sans"
+              >
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalendarMonth(
+                        (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+                      )
+                    }
+                    className="p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
+                    title="Previous month"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <div className="text-xs font-bold text-slate-900">
+                    {calendarMonth.toLocaleDateString(undefined, {
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalendarMonth(
+                        (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+                      )
+                    }
+                    className="p-1.5 rounded-xl text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
+                    title="Next month"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {WEEKDAYS.map((wd) => (
+                    <span
+                      key={wd}
+                      className="text-[10px] font-bold uppercase tracking-wider text-slate-400 py-1"
+                    >
+                      {wd}
+                    </span>
+                  ))}
+                  {calendarDays.map((cell, idx) => {
+                    if (!cell.day || !cell.iso) {
+                      return <div key={`empty-${idx}`} className="h-8" />;
+                    }
+                    const isSelected = expenseDate === cell.iso;
+                    const isToday = todayIso === cell.iso;
+                    return (
+                      <button
+                        key={cell.iso}
+                        type="button"
+                        onClick={() => {
+                          setExpenseDate(cell.iso!);
+                          setShowDatePopover(false);
+                        }}
+                        className={`h-8 rounded-xl text-xs font-bold flex items-center justify-center cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : isToday
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cell.day}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      setExpenseDate(toLocalDateInputValue(now.getTime()));
+                      setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                      setShowDatePopover(false);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 cursor-pointer transition-colors"
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDatePopover(false)}
+                    className="px-3 py-1.5 rounded-xl text-slate-500 text-xs font-bold hover:bg-slate-100 cursor-pointer transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showCurrencyPopover && (
             <div
