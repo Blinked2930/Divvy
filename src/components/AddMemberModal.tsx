@@ -196,12 +196,12 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           </p>
         </form>
 
-        {/* Current Roster & Claim Status */}
+        {/* Current Members & Claim Status */}
         <div className="space-y-3 pt-3 border-t border-slate-100">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-slate-400" />
-              Current Roster ({members.length})
+              Current Members ({members.length})
             </span>
             <button
               type="button"
