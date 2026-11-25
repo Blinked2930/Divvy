@@ -152,7 +152,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onCl
 
           <div className="space-y-2 pt-2 border-t border-slate-100">
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Add Roommates / Members
+              Add Members
             </label>
             <div className="flex gap-2">
               <input
