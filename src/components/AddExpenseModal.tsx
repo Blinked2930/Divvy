@@ -798,132 +798,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             )}
 
-            {/* Private Advanced Drawer: Payment Method + Pulse Budget + Daily/Bucket Account */}
-            {isPaidBySelf && (
-              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
-                    {fundingBucket
-                      ? `Bucket: ${FUNDING_BUCKETS.find((b) => b.id === fundingBucket)?.label}`
-                      : `${paidWith === 'Cash' ? 'Cash' : 'Card / Bank'} · ${syncToPulse ? 'Pulse Counted' : 'Pulse Excluded'}`}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAdvancedDrawer((v) => !v)}
-                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 hover:border-slate-300 cursor-pointer transition-colors shrink-0"
-                  >
-                    {showAdvancedDrawer ? 'Hide Advanced' : 'Advanced'}
-                  </button>
-                </div>
-
-                {showAdvancedDrawer && (
-                  <div className="space-y-3 pt-2 border-t border-slate-200/60 animate-in fade-in">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                        Your Payment Method
-                      </label>
-                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
-                        <button
-                          type="button"
-                          onClick={() => setPaidWith('Card')}
-                          className={`py-1.5 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                            paidWith === 'Card'
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          Card / Bank
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPaidWith('Cash')}
-                          className={`py-1.5 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                            paidWith === 'Cash'
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          <Banknote className="w-3.5 h-3.5" />
-                          Cash
-                        </button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                        Pulse Budget Sync
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setSyncToPulse((v) => !v)}
-                        className={`w-full py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          syncToPulse
-                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                        }`}
-                      >
-                        {syncToPulse && <Check className="w-3.5 h-3.5 shrink-0" />}
-                        <span>{syncToPulse ? 'Counted in Pulse Budget' : 'Excluded from Pulse Budget'}</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 pt-1 border-t border-slate-200/60">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                        Funding Pool
-                      </label>
-                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
-                        <button
-                          type="button"
-                          onClick={() => setFundingBucket(undefined)}
-                          className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                            !fundingBucket
-                              ? 'bg-white text-slate-900 shadow-xs'
-                              : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          Daily Spending
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFundingBucket(fundingBucket ?? 'travel')}
-                          className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                            fundingBucket
-                              ? 'bg-indigo-600 text-white shadow-xs'
-                              : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          Bucket Account
-                        </button>
-                      </div>
-
-                      {fundingBucket && (
-                        <div className="grid grid-cols-2 gap-1.5 pt-1">
-                          {FUNDING_BUCKETS.map((b) => {
-                            const active = fundingBucket === b.id;
-                            return (
-                              <button
-                                key={b.id}
-                                type="button"
-                                onClick={() => setFundingBucket(b.id)}
-                                className={`py-2 px-2.5 rounded-xl border text-xs font-bold text-left cursor-pointer transition-all ${
-                                  active
-                                    ? 'bg-indigo-50 border-indigo-400 text-indigo-800'
-                                    : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
-                                }`}
-                              >
-                                {b.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Date */}
             <div className="min-w-0">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -1102,6 +976,132 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* Private Advanced Drawer: Payment Method + Pulse Budget + Daily/Bucket Account */}
+            {isPaidBySelf && (
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
+                    {fundingBucket
+                      ? `Bucket: ${FUNDING_BUCKETS.find((b) => b.id === fundingBucket)?.label}`
+                      : `${paidWith === 'Cash' ? 'Cash' : 'Card / Bank'} · ${syncToPulse ? 'Pulse Counted' : 'Pulse Excluded'}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedDrawer((v) => !v)}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 hover:border-slate-300 cursor-pointer transition-colors shrink-0"
+                  >
+                    {showAdvancedDrawer ? 'Hide Advanced' : 'Advanced'}
+                  </button>
+                </div>
+
+                {showAdvancedDrawer && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200/60 animate-in fade-in">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Your Payment Method
+                      </label>
+                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setPaidWith('Card')}
+                          className={`py-1.5 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            paidWith === 'Card'
+                              ? 'bg-white text-slate-900 shadow-xs'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          <CreditCard className="w-3.5 h-3.5" />
+                          Card / Bank
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaidWith('Cash')}
+                          className={`py-1.5 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            paidWith === 'Cash'
+                              ? 'bg-white text-slate-900 shadow-xs'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          <Banknote className="w-3.5 h-3.5" />
+                          Cash
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Pulse Budget Sync
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setSyncToPulse((v) => !v)}
+                        className={`w-full py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          syncToPulse
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                            : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                        }`}
+                      >
+                        {syncToPulse && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        <span>{syncToPulse ? 'Counted in Pulse Budget' : 'Excluded from Pulse Budget'}</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 pt-1 border-t border-slate-200/60">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        Funding Pool
+                      </label>
+                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setFundingBucket(undefined)}
+                          className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                            !fundingBucket
+                              ? 'bg-white text-slate-900 shadow-xs'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Daily Spending
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFundingBucket(fundingBucket ?? 'travel')}
+                          className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                            fundingBucket
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Bucket Account
+                        </button>
+                      </div>
+
+                      {fundingBucket && (
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                          {FUNDING_BUCKETS.map((b) => {
+                            const active = fundingBucket === b.id;
+                            return (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => setFundingBucket(b.id)}
+                                className={`py-2 px-2.5 rounded-xl border text-xs font-bold text-left cursor-pointer transition-all ${
+                                  active
+                                    ? 'bg-indigo-50 border-indigo-400 text-indigo-800'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                                }`}
+                              >
+                                {b.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
