@@ -42,6 +42,15 @@ interface AddExpenseModalProps {
   initialExpense?: any;
 }
 
+export type FundingBucket = 'travel' | 'savings' | 'investments' | 'sharing';
+
+export const FUNDING_BUCKETS: ReadonlyArray<{ id: FundingBucket; label: string }> = [
+  { id: 'travel', label: 'Travel / Dream' },
+  { id: 'savings', label: 'Savings' },
+  { id: 'investments', label: 'Investments' },
+  { id: 'sharing', label: 'Sharing' },
+];
+
 type SplitMode = 'equal' | 'exact' | 'shares';
 
 export const DIVVY_CATEGORIES = [
@@ -154,9 +163,14 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
     initialExpense?.paidByMemberId || members[0]?._id || ''
   );
   const [paidWith, setPaidWith] = useState<'Card' | 'Cash'>(initialExpense?.paidWith || 'Card');
+  const [fundingBucket, setFundingBucket] = useState<FundingBucket | undefined>(
+    initialExpense?.fundingBucket
+  );
+  const [showAdvancedDrawer, setShowAdvancedDrawer] = useState<boolean>(
+    Boolean(initialExpense?.fundingBucket)
+  );
   const [syncToPulse, setSyncToPulse] = useState<boolean>(initialExpense?.syncToPulse !== false);
 
-  // Food & Grocery metadata (for Pulse Insights, behind Advanced toggle)
   const [showFoodAdvanced, setShowFoodAdvanced] = useState<boolean>(false);
   const [vendorType, setVendorType] = useState<string | undefined>(initialExpense?.vendorType);
   const [foodType, setFoodType] = useState<string | undefined>(initialExpense?.foodType);
@@ -231,6 +245,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setCalendarMonth(new Date(dt.getFullYear(), dt.getMonth(), 1));
       setPaidByMemberId(initialExpense.paidByMemberId || members[0]?._id || '');
       setPaidWith(initialExpense.paidWith || 'Card');
+      setFundingBucket(initialExpense.fundingBucket);
+      setShowAdvancedDrawer(Boolean(initialExpense.fundingBucket));
       setSyncToPulse(initialExpense.syncToPulse !== false);
       setVendorType(initialExpense.vendorType);
       setFoodType(initialExpense.foodType);
@@ -279,6 +295,8 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
       setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
       setPaidByMemberId(defaultPayer);
       setPaidWith('Card');
+      setFundingBucket(undefined);
+      setShowAdvancedDrawer(false);
       setSyncToPulse(true);
       setVendorType(undefined);
       setFoodType(undefined);
@@ -524,6 +542,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
         estimatedMeals: validMeals,
         paidByMemberId: paidByMemberId as Id<'groupMembers'>,
         paidWith: isPaidBySelf ? paidWith : undefined,
+        fundingBucket: isPaidBySelf && showAdvancedDrawer ? fundingBucket : undefined,
         isBigExpense: false,
         syncToPulse,
         timestamp: resolvedTimestamp,
@@ -700,7 +719,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Food & Grocery Details (for Pulse Insights, behind Advanced toggle) */}
             {showFoodMetadata && (
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
@@ -780,7 +798,82 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             )}
 
-            {/* Date & Pulse Sync Row */}
+            {isPaidBySelf && (
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    {fundingBucket
+                      ? `Bucket: ${FUNDING_BUCKETS.find((b) => b.id === fundingBucket)?.label}`
+                      : 'Daily Spending'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAdvancedDrawer((v) => {
+                        const next = !v;
+                        if (!next) setFundingBucket(undefined);
+                        return next;
+                      });
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 hover:border-slate-300 cursor-pointer transition-colors"
+                  >
+                    {showAdvancedDrawer ? 'Hide Advanced' : 'Advanced'}
+                  </button>
+                </div>
+
+                {showAdvancedDrawer && (
+                  <div className="space-y-2 pt-1.5 border-t border-slate-200/60 animate-in fade-in">
+                    <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-xl">
+                      <button
+                        type="button"
+                        onClick={() => setFundingBucket(undefined)}
+                        className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          !fundingBucket
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Daily Spending
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFundingBucket(fundingBucket ?? 'travel')}
+                        className={`py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          fundingBucket
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Bucket Account
+                      </button>
+                    </div>
+
+                    {fundingBucket && (
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        {FUNDING_BUCKETS.map((b) => {
+                          const active = fundingBucket === b.id;
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              onClick={() => setFundingBucket(b.id)}
+                              className={`py-2 px-2.5 rounded-xl border text-xs font-bold text-left cursor-pointer transition-all ${
+                                active
+                                  ? 'bg-indigo-50 border-indigo-400 text-indigo-800'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              {b.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 min-w-0">
               <div className="min-w-0 overflow-hidden">
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 truncate">
@@ -822,7 +915,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
               </div>
             </div>
 
-            {/* Payment Method (only shown when you paid) */}
             {isPaidBySelf && (
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">

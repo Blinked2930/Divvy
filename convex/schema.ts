@@ -2,6 +2,15 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const fundingBucketValidator = v.optional(
+  v.union(
+    v.literal("travel"),
+    v.literal("savings"),
+    v.literal("investments"),
+    v.literal("sharing")
+  )
+);
+
 export default defineSchema({
   // ---------- Pulse Personal Tables ----------
   expenses: defineTable({
@@ -16,6 +25,7 @@ export default defineSchema({
     itemName: v.optional(v.string()),
     estimatedMeals: v.optional(v.number()),
     paidWith: v.optional(v.string()),
+    fundingBucket: fundingBucketValidator,
     budgetAmountALL: v.optional(v.number()),
     debtId: v.optional(v.string()),
     debtRelated: v.optional(v.boolean()),
@@ -44,6 +54,7 @@ export default defineSchema({
     travelStashALL: v.number(),
     savingsALL: v.optional(v.number()),
     investmentsALL: v.optional(v.number()),
+    sharingALL: v.optional(v.number()),
     plannedBigExpensesALL: v.optional(v.number()),
     customAccounts: v.optional(
       v.array(
@@ -158,6 +169,7 @@ export default defineSchema({
     ),
     // Pulse Budget Integration Fields
     paidWith: v.optional(v.union(v.literal("Cash"), v.literal("Card"))),
+    fundingBucket: fundingBucketValidator,
     isBigExpense: v.optional(v.boolean()),
     syncToPulse: v.optional(v.boolean()),
     pulseSourceExpenseId: v.optional(v.string()),
@@ -181,6 +193,7 @@ export default defineSchema({
     fxRateToALL: v.optional(v.number()),
     currency: v.string(),
     paidWith: v.optional(v.union(v.literal("Cash"), v.literal("Card"))),
+    fundingBucket: fundingBucketValidator,
     timestamp: v.number(),
     createdAt: v.number(),
     deleted: v.optional(v.boolean()),
